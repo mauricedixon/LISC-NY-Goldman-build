@@ -51,7 +51,7 @@ export default function Home() {
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto p-8">
-        {activeTab === "completeness" ? <CompletenessCheckTab selectedAgencies={selectedAgencies.filter(a => a.checked).map(a => a.id)} /> : <PolicyChatbotTab />}
+        {activeTab === "completeness" ? <CompletenessCheckTab selectedAgencies={selectedAgencies.filter(a => a.checked).map(a => a.id)} /> : <PolicyChatbotTab selectedAgencies={selectedAgencies.filter(a => a.checked).map(a => a.id)} selectedAgencyNames={selectedAgencies.filter(a => a.checked).map(a => a.name)} />}
       </div>
     </div>
   );
@@ -136,7 +136,7 @@ function CompletenessCheckTab({ selectedAgencies }: { selectedAgencies: string[]
             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             onChange={handleFileChange}
             disabled={isUploading}
-            accept=".pdf,.doc,.docx"
+            accept=".pdf,.doc,.docx,.md"
           />
           <button 
             className={`bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-md font-medium text-sm transition-colors shadow-sm ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -228,7 +228,55 @@ function CompletenessCheckTab({ selectedAgencies }: { selectedAgencies: string[]
   );
 }
 
-function PolicyChatbotTab() {
+function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedAgencies: string[], selectedAgencyNames: string[] }) {
+  const [messages, setMessages] = useState<{role: 'user' | 'assistant', content: string}[]>([]);
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const agencyNamesString = selectedAgencyNames.length > 0 
+    ? selectedAgencyNames.join(", ") 
+    : "all agencies";
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
+
+    const newMessages = [...messages, { role: 'user' as const, content: input.trim() }];
+    setMessages(newMessages);
+    setInput("");
+    setIsLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: newMessages,
+          agencies: selectedAgencies
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setMessages(prev => [...prev, data.response]);
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${data.error || 'Failed to get response'}` }]);
+      }
+    } catch (error) {
+      console.error("Chat error:", error);
+      setMessages(prev => [...prev, { role: 'assistant', content: "Error connecting to the chat service." }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto h-full flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
       <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
@@ -237,25 +285,60 @@ function PolicyChatbotTab() {
       </div>
       
       <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
-        {/* Example empty state message */}
         <div className="flex gap-4">
           <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
             <Building2 className="w-4 h-4 text-blue-600" />
           </div>
           <div className="bg-slate-100 rounded-2xl rounded-tl-none px-5 py-3 text-sm text-slate-700 max-w-[80%]">
-            Hello! I'm your policy research assistant. Based on your sidebar selection, I am currently searching against the <strong>HCR (NYS)</strong> rulebook. What would you like to know?
+            Hello! I'm your policy research assistant. Based on your sidebar selection, I am currently searching against the <strong>{agencyNamesString}</strong> rulebook(s). What would you like to know?
           </div>
         </div>
+
+        {messages.map((msg, idx) => (
+          <div key={idx} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+            {msg.role === 'assistant' && (
+              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                <Building2 className="w-4 h-4 text-blue-600" />
+              </div>
+            )}
+            <div className={`rounded-2xl px-5 py-3 text-sm max-w-[80%] whitespace-pre-wrap ${
+              msg.role === 'user' 
+                ? 'bg-blue-600 text-white rounded-tr-none' 
+                : 'bg-slate-100 text-slate-700 rounded-tl-none'
+            }`}>
+              {msg.content}
+            </div>
+          </div>
+        ))}
+
+        {isLoading && (
+          <div className="flex gap-4">
+            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+              <Building2 className="w-4 h-4 text-blue-600" />
+            </div>
+            <div className="bg-slate-100 rounded-2xl rounded-tl-none px-5 py-3 text-sm text-slate-700 max-w-[80%] flex gap-1">
+              <span className="animate-bounce">.</span><span className="animate-bounce" style={{animationDelay: '150ms'}}>.</span><span className="animate-bounce" style={{animationDelay: '300ms'}}>.</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="p-4 border-t border-slate-100 bg-white">
         <div className="relative">
           <input 
             type="text" 
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Ask about AMI limits, LTV caps, zoning..." 
             className="w-full bg-slate-50 border border-slate-200 rounded-full pl-5 pr-12 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={isLoading}
           />
-          <button className="absolute right-2 top-2 p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors">
+          <button 
+            onClick={handleSend}
+            disabled={!input.trim() || isLoading}
+            className="absolute right-2 top-2 p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <Send className="w-4 h-4" />
           </button>
         </div>

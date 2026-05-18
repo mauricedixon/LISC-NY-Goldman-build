@@ -13,6 +13,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     model: "text-embedding-3-small",
     input: text,
     encoding_format: "float",
+    dimensions: 1536,
   });
 
   return response.data[0].embedding;

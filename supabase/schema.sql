@@ -15,7 +15,7 @@ create table document_chunks (
   id bigserial primary key,
   document_id bigint references public_documents(id) on delete cascade,
   content text not null, -- The markdown chunk from LlamaParse
-  embedding vector(1024), -- Voyage AI embeddings are 1024 dimensions (or 1536 for OpenAI)
+  embedding vector(1536), -- OpenAI text-embedding-3-small with 1536 dimensions
   page_number integer,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );

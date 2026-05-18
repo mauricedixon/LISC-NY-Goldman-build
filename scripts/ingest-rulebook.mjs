@@ -101,6 +101,7 @@ async function ingestRulebook() {
       model: "text-embedding-3-small",
       input: chunk,
       encoding_format: "float",
+      dimensions: 1536,
     });
     
     const embedding = embeddingResponse.data[0].embedding;

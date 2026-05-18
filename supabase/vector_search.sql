@@ -3,7 +3,7 @@ drop function if exists match_document_chunks;
 
 -- Create the vector search function
 create or replace function match_document_chunks (
-  query_embedding vector(1024),
+  query_embedding vector(1536),
   match_threshold float,
   match_count int,
   filter_agencies text[]
