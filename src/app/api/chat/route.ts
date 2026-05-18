@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       const condensingResult = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 200,
-        system: "Given a conversation history, rewrite the final user question into a single, self-contained search query that captures the full intent. Output ONLY the rewritten query, nothing else.",
+        system: "Given a conversation history, rewrite the final user question into a single, self-contained search query that captures the full intent. Output ONLY the rewritten query as plain text, nothing else.",
         messages: [
           {
             role: "user",
@@ -53,14 +53,27 @@ export async function POST(request: NextRequest) {
       console.error('Vector search error:', searchError);
     }
 
-    // 4. Combine retrieved chunks
-    const contextText = relevantChunks && relevantChunks.length > 0
+    // 4. Combine retrieved chunks — track whether any data was actually found
+    const hasResults = relevantChunks && relevantChunks.length > 0;
+    const contextText = hasResults
       ? relevantChunks.map((chunk: any) => `[Source: ${chunk.agency} - ${chunk.title}, Page ${chunk.page_number}]\n${chunk.content}`).join('\n\n')
-      : "No relevant public rulebooks found in the database for the selected agencies.";
+      : null;
+
+    // If there are no results at all, short-circuit with a clear message before calling Claude
+    if (!hasResults) {
+      const agencyLabel = agencyNames && agencyNames.length > 0 ? agencyNames.join(', ') : 'the selected agencies';
+      return NextResponse.json({
+        success: true,
+        response: {
+          role: 'assistant',
+          content: `No rulebook data has been ingested yet for ${agencyLabel}. Please contact your administrator to upload and ingest the relevant term sheets for this agency before using the chatbot.`
+        }
+      });
+    }
 
     // 5. Build system prompt
     const agencyContext = agencyNames && agencyNames.length > 0
-      ? `The user has selected the following target agencies: ${agencyNames.join(', ')}. Refer to these agencies by name when relevant in your responses.`
+      ? `The user has selected the following target agencies: ${agencyNames.join(', ')}. Only reference these specific agencies in your responses. Never reference or mention any other agencies not listed here.`
       : 'The user has not selected any specific agencies.';
 
     const systemPrompt = `You are a professional policy research assistant for LISC NY, helping underwriters navigate affordable housing loan regulations.
@@ -74,11 +87,13 @@ ${contextText}
 </rulebooks>
 
 Instructions:
-- Always reference the selected agency/agencies by name in your response when applicable (e.g. "According to the HCR guidelines...").
-- If the answer is in the rulebooks, answer the question and cite the specific Source and Page Number.
-- If the answer is NOT in the rulebooks, state clearly that you cannot find the answer in the provided documents for the selected agencies. Do not guess or make up answers.
+- Only use information from the rulebook excerpts above. Do not reference any agencies, rules, or data outside of what is provided.
+- Always cite the specific Source and Page Number when referencing the rulebooks.
+- If the answer is not clearly present in the excerpts above, say so directly. Do not guess or supplement with outside knowledge.
 - Write in a professional, formal tone suitable for financial underwriting professionals.
-- Do not use emojis, bullet symbols, or informal language. Use plain markdown formatting only (bold, headers, numbered lists).`;
+- Do NOT use any markdown syntax. No hashtags for headers, no asterisks for bold, no backticks. Write in plain text only.
+- You may use numbered lists or dashed bullet points for clarity when listing multiple items.
+- Do not use emojis or informal language.`;
 
     // 6. Call Anthropic with full conversation history for a coherent response
     const anthropicMessages = messages.map(msg => ({
