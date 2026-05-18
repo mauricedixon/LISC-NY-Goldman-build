@@ -80,7 +80,7 @@ Respond strictly in the following JSON format:
 `;
 
     const msg = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-6",
       max_tokens: 2000,
       temperature: 0,
       system: "You are a precise, analytical underwriting assistant. You only output valid JSON.",

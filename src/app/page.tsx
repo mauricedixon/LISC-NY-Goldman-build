@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { UploadCloud, FileText, AlertTriangle, CheckCircle2, MessageSquare, Send, FileCheck, Building2 } from "lucide-react";
 
 export default function Home() {
@@ -232,10 +232,20 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
   const [messages, setMessages] = useState<{role: 'user' | 'assistant', content: string}[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const prevAgenciesRef = useRef<string>(selectedAgencies.join(','));
 
   const agencyNamesString = selectedAgencyNames.length > 0 
     ? selectedAgencyNames.join(", ") 
-    : "all agencies";
+    : "no agencies selected";
+
+  // Reset chat history when the selected agencies change
+  useEffect(() => {
+    const current = selectedAgencies.join(',');
+    if (current !== prevAgenciesRef.current) {
+      setMessages([]);
+      prevAgenciesRef.current = current;
+    }
+  }, [selectedAgencies]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -251,7 +261,8 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: newMessages,
-          agencies: selectedAgencies
+          agencies: selectedAgencies,
+          agencyNames: selectedAgencyNames
         }),
       });
 
@@ -290,7 +301,11 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
             <Building2 className="w-4 h-4 text-blue-600" />
           </div>
           <div className="bg-slate-100 rounded-2xl rounded-tl-none px-5 py-3 text-sm text-slate-700 max-w-[80%]">
-            Hello! I'm your policy research assistant. Based on your sidebar selection, I am currently searching against the <strong>{agencyNamesString}</strong> rulebook(s). What would you like to know?
+            {selectedAgencyNames.length > 0 ? (
+              <>This assistant is currently searching the <strong>{agencyNamesString}</strong> rulebook{selectedAgencyNames.length > 1 ? 's' : ''}. Please enter your question below.</>
+            ) : (
+              <>No target agencies are selected. Please select one or more agencies from the sidebar to begin.</>
+            )}
           </div>
         </div>
 

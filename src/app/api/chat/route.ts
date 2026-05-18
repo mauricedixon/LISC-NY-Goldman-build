@@ -9,7 +9,7 @@ const anthropic = new Anthropic({
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages, agencies } = await request.json();
+    const { messages, agencies, agencyNames } = await request.json();
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: 'Messages are required' }, { status: 400 });
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     let searchQuery = lastUserMessage.content;
     if (messages.length > 1) {
       const condensingResult = await anthropic.messages.create({
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         max_tokens: 200,
         system: "Given a conversation history, rewrite the final user question into a single, self-contained search query that captures the full intent. Output ONLY the rewritten query, nothing else.",
         messages: [
@@ -59,7 +59,13 @@ export async function POST(request: NextRequest) {
       : "No relevant public rulebooks found in the database for the selected agencies.";
 
     // 5. Build system prompt
-    const systemPrompt = `You are a helpful policy research assistant for LISC NY.
+    const agencyContext = agencyNames && agencyNames.length > 0
+      ? `The user has selected the following target agencies: ${agencyNames.join(', ')}. Refer to these agencies by name when relevant in your responses.`
+      : 'The user has not selected any specific agencies.';
+
+    const systemPrompt = `You are a professional policy research assistant for LISC NY, helping underwriters navigate affordable housing loan regulations.
+${agencyContext}
+
 Your job is to answer the user's questions strictly using the provided excerpts from public government rulebooks.
 
 Here are the relevant excerpts (The "Source of Truth"):
@@ -68,9 +74,11 @@ ${contextText}
 </rulebooks>
 
 Instructions:
+- Always reference the selected agency/agencies by name in your response when applicable (e.g. "According to the HCR guidelines...").
 - If the answer is in the rulebooks, answer the question and cite the specific Source and Page Number.
-- If the answer is NOT in the rulebooks, state clearly that you cannot find the answer in the provided documents. Do not guess or make up answers.
-- Format your response nicely using markdown.`;
+- If the answer is NOT in the rulebooks, state clearly that you cannot find the answer in the provided documents for the selected agencies. Do not guess or make up answers.
+- Write in a professional, formal tone suitable for financial underwriting professionals.
+- Do not use emojis, bullet symbols, or informal language. Use plain markdown formatting only (bold, headers, numbered lists).`;
 
     // 6. Call Anthropic with full conversation history for a coherent response
     const anthropicMessages = messages.map(msg => ({
@@ -79,7 +87,7 @@ Instructions:
     }));
 
     const msg = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-6",
       max_tokens: 1500,
       temperature: 0.2,
       system: systemPrompt,
