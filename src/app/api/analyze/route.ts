@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { generateEmbedding } from '@/utils/embeddings';
+import { buildDealSummary, type DealFormData } from '@/types/deal';
+import { retrieveRulebookContext } from '@/utils/rag';
+import { parseClaudeJson } from '@/utils/parse-claude-json';
+import type { AnalysisResult } from '@/types/wizard';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -9,96 +11,74 @@ const anthropic = new Anthropic({
 
 export async function POST(request: NextRequest) {
   try {
-    const { markdown, agencies } = await request.json();
+    const { formData, agencies } = await request.json() as { formData: DealFormData; agencies: string[] };
 
-    if (!markdown) {
-      return NextResponse.json({ error: 'No markdown content provided' }, { status: 400 });
+    if (!formData) {
+      return NextResponse.json({ error: 'No deal data provided' }, { status: 400 });
     }
 
-    const supabase = await createClient();
+    const dealSummary = buildDealSummary(formData);
+    const { contextText } = await retrieveRulebookContext(dealSummary, agencies, 10);
 
-    // 1. Generate an embedding for the uploaded draft memo to find similar rules
-    // (In a real production app, we would chunk the draft memo and search for each chunk.
-    // For this PoC, we will just embed the first 8000 characters to get the general "gist" of the deal)
-    const queryEmbedding = await generateEmbedding(markdown.substring(0, 8000));
-
-    // 2. Search the Supabase vector database for relevant public rulebooks
-    // We filter by the agencies selected in the sidebar
-    const { data: relevantChunks, error: searchError } = await supabase.rpc('match_document_chunks', {
-      query_embedding: queryEmbedding,
-      match_threshold: 0.1, // Lower threshold for PoC to ensure we get matches
-      match_count: 10, // Get top 10 most relevant chunks
-      filter_agencies: agencies // Pass the selected agencies to filter
-    });
-
-    if (searchError) {
-      console.error('Vector search error:', searchError);
-      // Fallback: If the database is empty or RPC fails, we just won't use RAG context
-    }
-
-    // Combine the retrieved chunks into a single context string
-    const contextText = relevantChunks 
-      ? relevantChunks.map((chunk: any) => `[Source: ${chunk.agency} - ${chunk.title}, Page ${chunk.page_number}]\n${chunk.content}`).join('\n\n')
-      : "No relevant public rulebooks found in the database for the selected agencies.";
-
-    // 3. Send the draft memo and the retrieved rules to Anthropic
+    // 3. Ask Claude to run a completeness check and flag compliance issues
     const prompt = `
 You are an expert affordable housing underwriter assistant for LISC NY.
-Your job is to review a draft deal memo and cross-reference it against public government regulations to find compliance issues.
+Your job is to review structured deal data entered by an underwriter and:
+1. Assess the completeness of the submission — identify which standard underwriting fields are present, missing, or need clarification.
+2. Flag any compliance violations where the deal data contradicts public government regulations. Cite the specific source and page number.
 
-Here are the relevant excerpts from the public government rulebooks (The "Source of Truth"):
+Here are the relevant excerpts from public government rulebooks (Source of Truth):
 <rulebooks>
 ${contextText}
 </rulebooks>
 
-Here is the draft deal memo uploaded by the underwriter:
-<draft_memo>
-${markdown}
-</draft_memo>
-
-Please perform two tasks:
-1. Extract standard underwriting data points from the draft memo.
-2. Flag any compliance violations where the draft memo contradicts the public rulebooks. If you flag something, you MUST cite the specific Source and Page Number from the <rulebooks> section. If there are no violations, state that.
+Here is the structured deal data entered by the underwriter:
+<deal_data>
+${dealSummary}
+</deal_data>
 
 Respond strictly in the following JSON format:
 {
-  "questionnaire": {
-    "projectName": "string or null",
-    "developerName": "string or null",
-    "totalUnits": "number or null",
-    "requestedLoanAmount": "string or null",
-    "targetAMI": "string or null"
-  },
+  "completenessChecklist": [
+    {
+      "field": "Human-readable field name",
+      "status": "provided" | "missing" | "needs_clarification",
+      "note": "Optional short note, especially for needs_clarification items"
+    }
+  ],
   "complianceFlags": [
     {
-      "issue": "Description of the violation",
-      "citation": "Exact citation from the rulebook",
+      "issue": "Description of the violation or concern",
+      "citation": "Exact citation from the rulebook including source and page number",
       "severity": "High" | "Medium" | "Low"
     }
   ]
 }
+
+For the completenessChecklist, evaluate these standard fields: Project Name, Developer/Sponsor, Loan Type, Borough/Location, Total Units, Affordable Units, AMI Targets, Total Development Cost, Requested Loan Amount, LTV, DSCR, Other Funding Sources.
+A field is "provided" if a real value was given, "missing" if it was left blank or says [Not provided], and "needs_clarification" if the value seems incomplete, inconsistent, or unusual.
 `;
 
     const msg = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2000,
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
       temperature: 0,
-      system: "You are a precise, analytical underwriting assistant. You only output valid JSON.",
-      messages: [
-        {
-          role: "user",
-          content: prompt
-        }
-      ]
+      system: 'You are a precise, analytical underwriting assistant. You only output valid JSON.',
+      messages: [{ role: 'user', content: prompt }],
     });
 
-    // Parse the JSON response from Claude
     const responseText = msg.content[0].type === 'text' ? msg.content[0].text : '{}';
-    
-    // Clean up the response in case Claude added markdown formatting around the JSON
-    const cleanJson = responseText.replace(/```json\n?|\n?```/g, '').trim();
-    
-    const analysis = JSON.parse(cleanJson);
+
+    let analysis: AnalysisResult;
+    try {
+      analysis = parseClaudeJson<AnalysisResult>(responseText);
+    } catch {
+      console.error('JSON parse error — raw response:', responseText.slice(0, 500));
+      return NextResponse.json(
+        { error: 'The AI returned a malformed response. Please try again.' },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({ success: true, analysis });
 

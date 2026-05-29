@@ -1,21 +1,45 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { UploadCloud, FileText, AlertTriangle, CheckCircle2, MessageSquare, Send, FileCheck, Building2 } from "lucide-react";
+import { MessageSquare, Send, FileCheck, Building2, ChevronRight, ClipboardList } from "lucide-react";
+import { Sidebar, LOAN_TYPES, type LoanType } from "@/components/Sidebar";
+import { AnalysisResults } from "@/components/completeness/AnalysisResults";
+import { GuidedReviewWizard } from "@/components/completeness/GuidedReviewWizard";
+import { EMPTY_DEAL_FORM } from "@/types/deal";
+import type { AnalysisResult } from "@/types/wizard";
+
+const DEFAULT_AGENCIES = [
+  { id: "hpd", name: "HPD (NYC)", checked: false },
+  { id: "hdc", name: "HDC (NYC)", checked: false },
+  { id: "hcr", name: "HCR (NYS)", checked: true },
+  { id: "esd", name: "ESD (NYS)", checked: false },
+  { id: "hud", name: "HUD (Federal)", checked: false },
+  { id: "fannie", name: "Fannie/Freddie", checked: false },
+];
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"completeness" | "chatbot">("completeness");
-  const [selectedAgencies, setSelectedAgencies] = useState([
-    { id: "hpd", name: "HPD (NYC)", checked: false },
-    { id: "hdc", name: "HDC (NYC)", checked: false },
-    { id: "hcr", name: "HCR (NYS)", checked: true },
-    { id: "esd", name: "ESD (NYS)", checked: false },
-    { id: "hud", name: "HUD (Federal)", checked: false },
-    { id: "fannie", name: "Fannie/Freddie", checked: false },
-  ]);
+  const [agencies, setAgencies] = useState(DEFAULT_AGENCIES);
+  const [loanType, setLoanType] = useState<LoanType>(LOAN_TYPES[0]);
+  const [formData, setFormData] = useState({ ...EMPTY_DEAL_FORM });
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+
+  const toggleAgency = (id: string) => {
+    setAgencies(prev => prev.map(a => a.id === id ? { ...a, checked: !a.checked } : a));
+  };
+
+  const selectedAgencies = agencies.filter(a => a.checked).map(a => a.id);
+  const selectedAgencyNames = agencies.filter(a => a.checked).map(a => a.name);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50">
+    <div className="flex h-full w-full bg-slate-50">
+      <Sidebar
+        agencies={agencies}
+        onToggleAgency={toggleAgency}
+        loanType={loanType}
+        onLoanTypeChange={setLoanType}
+      />
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
       {/* Header / Tabs */}
       <header className="bg-white border-b border-slate-200 px-8 pt-6">
         <h1 className="text-2xl font-bold text-slate-800 mb-6">Underwriting Assistant</h1>
@@ -51,179 +75,327 @@ export default function Home() {
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto p-8">
-        {activeTab === "completeness" ? <CompletenessCheckTab selectedAgencies={selectedAgencies.filter(a => a.checked).map(a => a.id)} /> : <PolicyChatbotTab selectedAgencies={selectedAgencies.filter(a => a.checked).map(a => a.id)} selectedAgencyNames={selectedAgencies.filter(a => a.checked).map(a => a.name)} />}
+        {activeTab === "completeness"
+          ? <CompletenessCheckTab
+              selectedAgencies={selectedAgencies}
+              loanType={loanType}
+              formData={formData}
+              setFormData={setFormData}
+              analysisResult={analysisResult}
+              setAnalysisResult={setAnalysisResult}
+            />
+          : <PolicyChatbotTab selectedAgencies={selectedAgencies} selectedAgencyNames={selectedAgencyNames} />
+        }
+      </div>
       </div>
     </div>
   );
 }
 
-function CompletenessCheckTab({ selectedAgencies }: { selectedAgencies: string[] }) {
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadMessage, setUploadMessage] = useState("");
-  const [analysisResult, setAnalysisResult] = useState<any>(null);
+const EMPTY_FORM = EMPTY_DEAL_FORM;
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+type CheckMode = "quick" | "guided";
 
-    setIsUploading(true);
-    setUploadMessage("Uploading & Parsing Document (this may take up to 30s)...");
+interface CompletenessCheckTabProps {
+  selectedAgencies: string[];
+  loanType: string;
+  formData: typeof EMPTY_FORM;
+  setFormData: React.Dispatch<React.SetStateAction<typeof EMPTY_FORM>>;
+  analysisResult: AnalysisResult | null;
+  setAnalysisResult: React.Dispatch<React.SetStateAction<AnalysisResult | null>>;
+}
+
+function CompletenessCheckTab({
+  selectedAgencies,
+  loanType,
+  formData,
+  setFormData,
+  analysisResult,
+  setAnalysisResult,
+}: CompletenessCheckTabProps) {
+  const [checkMode, setCheckMode] = useState<CheckMode>("quick");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const handleModeChange = (mode: CheckMode) => {
+    setCheckMode(mode);
+    setAnalysisResult(null);
+    setErrorMessage("");
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-6">
+      <div className="flex items-center gap-1 bg-white rounded-lg border border-slate-200 p-1 w-fit">
+        <button
+          onClick={() => handleModeChange("quick")}
+          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            checkMode === "quick"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "text-slate-600 hover:text-slate-800"
+          }`}
+        >
+          Quick Check
+        </button>
+        <button
+          onClick={() => handleModeChange("guided")}
+          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            checkMode === "guided"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "text-slate-600 hover:text-slate-800"
+          }`}
+        >
+          Guided Review
+        </button>
+      </div>
+
+      {checkMode === "guided" ? (
+        <GuidedReviewWizard
+          selectedAgencies={selectedAgencies}
+          loanType={loanType}
+          analysisResult={analysisResult}
+          setAnalysisResult={setAnalysisResult}
+        />
+      ) : (
+        <QuickCheckForm
+          selectedAgencies={selectedAgencies}
+          loanType={loanType}
+          formData={formData}
+          setFormData={setFormData}
+          analysisResult={analysisResult}
+          setAnalysisResult={setAnalysisResult}
+          isAnalyzing={isAnalyzing}
+          setIsAnalyzing={setIsAnalyzing}
+          errorMessage={errorMessage}
+          setErrorMessage={setErrorMessage}
+        />
+      )}
+    </div>
+  );
+}
+
+interface QuickCheckFormProps {
+  selectedAgencies: string[];
+  loanType: string;
+  formData: typeof EMPTY_FORM;
+  setFormData: React.Dispatch<React.SetStateAction<typeof EMPTY_FORM>>;
+  analysisResult: AnalysisResult | null;
+  setAnalysisResult: React.Dispatch<React.SetStateAction<AnalysisResult | null>>;
+  isAnalyzing: boolean;
+  setIsAnalyzing: React.Dispatch<React.SetStateAction<boolean>>;
+  errorMessage: string;
+  setErrorMessage: React.Dispatch<React.SetStateAction<string>>;
+}
+
+function QuickCheckForm({
+  selectedAgencies,
+  loanType,
+  formData,
+  setFormData,
+  analysisResult,
+  setAnalysisResult,
+  isAnalyzing,
+  setIsAnalyzing,
+  errorMessage,
+  setErrorMessage,
+}: QuickCheckFormProps) {
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const handleReset = () => {
+    setFormData({ ...EMPTY_FORM });
+    setAnalysisResult(null);
+    setErrorMessage("");
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (selectedAgencies.length === 0) {
+      setErrorMessage("Please select at least one target agency in the sidebar before running the check.");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setErrorMessage("");
     setAnalysisResult(null);
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     try {
-      // 1. Upload and Parse
-      const uploadResponse = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      const uploadData = await uploadResponse.json();
-
-      if (!uploadResponse.ok || uploadData.warning) {
-        setUploadMessage(`Error during upload/parse: ${uploadData.error || uploadData.warning}`);
-        setIsUploading(false);
-        return;
-      }
-
-      setUploadMessage("Parsing complete! Analyzing compliance against rulebooks...");
-
-      // 2. Analyze (RAG Pipeline)
-      // We pass the parsed markdown and the currently selected agencies from the sidebar
-      const analyzeResponse = await fetch("/api/analyze", {
+      const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          markdown: uploadData.markdown || "MOCK_MARKDOWN_CONTENT_FOR_NOW", 
-          agencies: selectedAgencies
-        }),
+        body: JSON.stringify({ formData: { ...formData, loanType }, agencies: selectedAgencies }),
       });
 
-      const analyzeData = await analyzeResponse.json();
+      const data = await response.json();
 
-      if (analyzeResponse.ok) {
-        setUploadMessage("Analysis complete!");
-        setAnalysisResult(analyzeData.analysis);
+      if (response.ok && data.success) {
+        setAnalysisResult(data.analysis);
       } else {
-        setUploadMessage(`Analysis Error: ${analyzeData.error}`);
+        setErrorMessage(`Analysis error: ${data.error || "Unknown error"}`);
       }
-
-    } catch (error) {
-      console.error("Process failed", error);
-      setUploadMessage("Process failed. Check console.");
+    } catch (err) {
+      console.error("Analysis failed", err);
+      setErrorMessage("Failed to connect to analysis service.");
     } finally {
-      setIsUploading(false);
+      setIsAnalyzing(false);
     }
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
-      {/* File Dropzone */}
-      <div className="bg-white rounded-xl border border-slate-200 border-dashed p-10 flex flex-col items-center justify-center text-center relative">
-        <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-4">
-          <UploadCloud className="w-8 h-8" />
-        </div>
-        <h3 className="text-lg font-semibold text-slate-800 mb-2">Upload Draft Deal Memo</h3>
-        <p className="text-slate-500 text-sm max-w-md mb-6">
-          Drop your Word Document or PDF here. The engine will parse the details and cross-reference against the selected target agencies.
-        </p>
-        
-        <div className="relative">
-          <input 
-            type="file" 
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            onChange={handleFileChange}
-            disabled={isUploading}
-            accept=".pdf,.doc,.docx,.md"
-          />
-          <button 
-            className={`bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-md font-medium text-sm transition-colors shadow-sm ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+    <div className="space-y-8">
+
+      {/* Deal Data Entry Form */}
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+              <ClipboardList className="w-4 h-4 text-blue-600" />
+              Deal Data Entry
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">Enter deal details below. No documents are uploaded — only what you type is sent for analysis.</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleReset}
+            className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
           >
-            {isUploading ? "Processing..." : "Browse Files"}
+            Reset form
           </button>
         </div>
-        
-        {uploadMessage && (
-          <p className={`mt-4 text-sm ${uploadMessage.startsWith("Error") ? "text-red-500" : "text-blue-600 font-medium"}`}>
-            {uploadMessage}
-          </p>
-        )}
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Underwriting Questionnaire */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-            <h3 className="font-semibold text-slate-800 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-slate-500" />
-              Underwriting Questionnaire
-            </h3>
+        <div className="p-6 space-y-6">
+          {/* Section: Project Basics */}
+          <div>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Project Basics</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Project Name" name="projectName" value={formData.projectName} onChange={handleChange} placeholder="e.g. Mott Haven Senior Housing" />
+              <Field label="Developer / Sponsor" name="developerName" value={formData.developerName} onChange={handleChange} placeholder="e.g. Acme Community Development" />
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">Loan Type</label>
+                <div className="w-full border border-slate-100 bg-slate-50 rounded-lg px-3 py-2.5 text-sm text-slate-500 italic">
+                  {loanType} <span className="text-xs not-italic text-slate-400">(set in sidebar)</span>
+                </div>
+              </div>
+              <SelectField
+                label="Borough"
+                name="borough"
+                value={formData.borough}
+                onChange={handleChange}
+                options={["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]}
+              />
+            </div>
           </div>
-          <div className="p-6 flex-1 flex flex-col">
-            {!analysisResult ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-400 min-h-[200px]">
-                <FileText className="w-12 h-12 mb-3 text-slate-200" />
-                <p className="text-sm">Upload a memo to auto-fill data points.</p>
+
+          {/* Section: Unit Mix */}
+          <div>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Unit Mix</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Field label="Total Units" name="totalUnits" value={formData.totalUnits} onChange={handleChange} placeholder="e.g. 80" type="number" />
+              <Field label="Affordable Units" name="affordableUnits" value={formData.affordableUnits} onChange={handleChange} placeholder="e.g. 80" type="number" />
+              <Field label="AMI Targets" name="targetAMI" value={formData.targetAMI} onChange={handleChange} placeholder="e.g. 30%, 60%, 80%" />
+            </div>
+          </div>
+
+          {/* Section: Financials */}
+          <div>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Financials</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Total Development Cost" name="totalDevelopmentCost" value={formData.totalDevelopmentCost} onChange={handleChange} placeholder="e.g. $24,500,000" />
+              <Field label="Requested Loan Amount" name="requestedLoanAmount" value={formData.requestedLoanAmount} onChange={handleChange} placeholder="e.g. $6,000,000" />
+              <Field label="Loan-to-Value (LTV %)" name="ltv" value={formData.ltv} onChange={handleChange} placeholder="e.g. 75" type="number" />
+              <Field label="Debt Service Coverage Ratio (DSCR)" name="dscr" value={formData.dscr} onChange={handleChange} placeholder="e.g. 1.20" type="number" />
+            </div>
+          </div>
+
+          {/* Section: Additional */}
+          <div>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Additional</p>
+            <div className="grid grid-cols-1 gap-4">
+              <Field label="Other Funding Sources" name="otherFundingSources" value={formData.otherFundingSources} onChange={handleChange} placeholder="e.g. HPD loan, LIHTC equity, HCR subordinate" />
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">Additional Notes</label>
+                <textarea
+                  name="additionalNotes"
+                  value={formData.additionalNotes}
+                  onChange={handleChange}
+                  rows={3}
+                  placeholder="Any other relevant deal characteristics..."
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                />
               </div>
-            ) : (
-              <div className="space-y-4">
-                {Object.entries(analysisResult.questionnaire || {}).map(([key, value]) => (
-                  <div key={key} className="border-b border-slate-100 pb-3 last:border-0">
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
-                      {key.replace(/([A-Z])/g, ' $1').trim()}
-                    </p>
-                    <p className="text-sm text-slate-800 font-medium">
-                      {(value as string) || <span className="text-slate-400 italic">Not found in memo</span>}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
+            </div>
           </div>
         </div>
 
-        {/* Compliance Flags */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-            <h3 className="font-semibold text-slate-800 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-500" />
-              Compliance Flags
-            </h3>
-          </div>
-          <div className="p-6 flex-1 flex flex-col">
-            {!analysisResult ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-400 min-h-[200px]">
-                <CheckCircle2 className="w-12 h-12 mb-3 text-slate-200" />
-                <p className="text-sm">No flags yet. Upload a memo to begin.</p>
-              </div>
-            ) : analysisResult.complianceFlags && analysisResult.complianceFlags.length > 0 ? (
-              <div className="space-y-4">
-                {analysisResult.complianceFlags.map((flag: any, idx: number) => (
-                  <div key={idx} className="bg-red-50 border border-red-100 rounded-lg p-4">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-medium text-red-900 mb-1">{flag.issue}</p>
-                        <div className="bg-white/60 rounded p-2 text-xs text-red-800 border border-red-100 font-mono">
-                          <span className="font-semibold block mb-1">Citation:</span>
-                          {flag.citation}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+        <div className="px-6 pb-6 flex items-center gap-4">
+          <button
+            type="submit"
+            disabled={isAnalyzing}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-lg font-medium text-sm transition-colors shadow-sm"
+          >
+            {isAnalyzing ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Analyzing against rulebooks...
+              </>
             ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-green-600 min-h-[200px]">
-                <CheckCircle2 className="w-12 h-12 mb-3 text-green-200" />
-                <p className="text-sm font-medium">No compliance issues found!</p>
-              </div>
+              <>
+                <ChevronRight className="w-4 h-4" />
+                Run Completeness Check
+              </>
             )}
-          </div>
+          </button>
+          {errorMessage && <p className="text-sm text-red-500">{errorMessage}</p>}
         </div>
-      </div>
+      </form>
+
+      <AnalysisResults
+        analysisResult={analysisResult}
+        emptyMessage="Fill in deal details and run the check."
+      />
+    </div>
+  );
+}
+
+function Field({
+  label, name, value, onChange, placeholder, type = "text"
+}: {
+  label: string; name: string; value: string; onChange: (e: React.ChangeEvent<HTMLInputElement>) => void; placeholder?: string; type?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-slate-600 mb-1.5">{label}</label>
+      <input
+        type={type}
+        name={name}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+      />
+    </div>
+  );
+}
+
+function SelectField({
+  label, name, value, onChange, options
+}: {
+  label: string; name: string; value: string; onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void; options: string[];
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-slate-600 mb-1.5">{label}</label>
+      <select
+        name={name}
+        value={value}
+        onChange={onChange}
+        className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+      >
+        <option value="">Select...</option>
+        {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+      </select>
     </div>
   );
 }
@@ -233,10 +405,18 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const prevAgenciesRef = useRef<string>(selectedAgencies.join(','));
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const agencyNamesString = selectedAgencyNames.length > 0 
     ? selectedAgencyNames.join(", ") 
     : "no agencies selected";
+
+  const noAgenciesSelected = selectedAgencies.length === 0;
+
+  // Auto-scroll to bottom when messages update
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
 
   // Reset chat history when the selected agencies change
   useEffect(() => {
@@ -336,6 +516,7 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
             </div>
           </div>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
       <div className="p-4 border-t border-slate-100 bg-white">
@@ -345,13 +526,13 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about AMI limits, LTV caps, zoning..." 
-            className="w-full bg-slate-50 border border-slate-200 rounded-full pl-5 pr-12 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            disabled={isLoading}
+            placeholder={noAgenciesSelected ? "Select an agency in the sidebar to begin..." : "Ask about AMI limits, LTV caps, zoning..."}
+            className="w-full bg-slate-50 border border-slate-200 rounded-full pl-5 pr-12 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed"
+            disabled={isLoading || noAgenciesSelected}
           />
           <button 
             onClick={handleSend}
-            disabled={!input.trim() || isLoading}
+            disabled={!input.trim() || isLoading || noAgenciesSelected}
             className="absolute right-2 top-2 p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4" />
