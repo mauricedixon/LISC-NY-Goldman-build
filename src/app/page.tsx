@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { MessageSquare, Send, FileCheck, Building2, ChevronRight, ClipboardList } from "lucide-react";
+import { MessageSquare, Send, FileCheck, Building2, ChevronRight, ClipboardList, ListChecks, Sparkles } from "lucide-react";
 import { Sidebar, LOAN_TYPES, type LoanType } from "@/components/Sidebar";
+import { ContextStrip } from "@/components/ContextStrip";
 import { AnalysisResults } from "@/components/completeness/AnalysisResults";
 import { GuidedReviewWizard } from "@/components/completeness/GuidedReviewWizard";
 import { EMPTY_DEAL_FORM } from "@/types/deal";
@@ -32,7 +33,7 @@ export default function Home() {
   const selectedAgencyNames = agencies.filter(a => a.checked).map(a => a.name);
 
   return (
-    <div className="flex h-full w-full bg-slate-50">
+    <div className="flex h-full w-full bg-background">
       <Sidebar
         agencies={agencies}
         onToggleAgency={toggleAgency}
@@ -40,15 +41,19 @@ export default function Home() {
         onLoanTypeChange={setLoanType}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-      {/* Header / Tabs */}
-      <header className="bg-white border-b border-slate-200 px-8 pt-6">
-        <h1 className="text-2xl font-bold text-slate-800 mb-6">Underwriting Assistant</h1>
+      <header className="bg-white border-b border-border-subtle px-8 pt-6 shadow-sm">
+        <div className="flex items-start justify-between mb-5">
+          <div>
+            <p className="text-xs font-semibold text-brand uppercase tracking-wider mb-1">LISC NY</p>
+            <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Underwriting Assistant</h1>
+          </div>
+        </div>
         <div className="flex gap-6">
           <button 
             onClick={() => setActiveTab("completeness")}
             className={`pb-4 text-sm font-medium border-b-2 transition-colors ${
               activeTab === "completeness" 
-                ? "border-blue-600 text-blue-600" 
+                ? "border-brand text-brand" 
                 : "border-transparent text-slate-500 hover:text-slate-700"
             }`}
           >
@@ -61,7 +66,7 @@ export default function Home() {
             onClick={() => setActiveTab("chatbot")}
             className={`pb-4 text-sm font-medium border-b-2 transition-colors ${
               activeTab === "chatbot" 
-                ? "border-blue-600 text-blue-600" 
+                ? "border-brand text-brand" 
                 : "border-transparent text-slate-500 hover:text-slate-700"
             }`}
           >
@@ -73,8 +78,17 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto p-8">
+        <div className="max-w-6xl mx-auto mb-6">
+          <ContextStrip
+            loanType={loanType}
+            selectedAgencyIds={selectedAgencies}
+            selectedAgencyNames={selectedAgencyNames}
+            modeLabel={
+              activeTab === "completeness" ? "Completeness Check" : "Policy Chatbot"
+            }
+          />
+        </div>
         {activeTab === "completeness"
           ? <CompletenessCheckTab
               selectedAgencies={selectedAgencies}
@@ -125,25 +139,29 @@ function CompletenessCheckTab({
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center gap-1 bg-white rounded-lg border border-slate-200 p-1 w-fit">
+      <div className="flex items-center gap-1 bg-white rounded-xl border border-border-subtle p-1 w-fit shadow-sm">
         <button
+          type="button"
           onClick={() => handleModeChange("quick")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
             checkMode === "quick"
-              ? "bg-blue-600 text-white shadow-sm"
-              : "text-slate-600 hover:text-slate-800"
+              ? "bg-[#0d6e52] text-white shadow-sm"
+              : "text-slate-700 hover:text-slate-900 hover:bg-slate-100"
           }`}
         >
+          <ListChecks className="w-4 h-4" />
           Quick Check
         </button>
         <button
+          type="button"
           onClick={() => handleModeChange("guided")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
             checkMode === "guided"
-              ? "bg-blue-600 text-white shadow-sm"
-              : "text-slate-600 hover:text-slate-800"
+              ? "bg-[#0d6e52] text-white shadow-sm"
+              : "text-slate-700 hover:text-slate-900 hover:bg-slate-100"
           }`}
         >
+          <Sparkles className="w-4 h-4" />
           Guided Review
         </button>
       </div>
@@ -247,14 +265,14 @@ function QuickCheckForm({
     <div className="space-y-8">
 
       {/* Deal Data Entry Form */}
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white flex items-center justify-between">
           <div>
             <h3 className="font-semibold text-slate-800 flex items-center gap-2">
-              <ClipboardList className="w-4 h-4 text-blue-600" />
+              <ClipboardList className="w-4 h-4 text-brand" />
               Deal Data Entry
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">Enter deal details below. No documents are uploaded — only what you type is sent for analysis.</p>
+            <p className="text-xs text-slate-500 mt-0.5">Enter all deal details at once. No documents are uploaded.</p>
           </div>
           <button
             type="button"
@@ -322,7 +340,7 @@ function QuickCheckForm({
                   onChange={handleChange}
                   rows={3}
                   placeholder="Any other relevant deal characteristics..."
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/30 resize-none"
                 />
               </div>
             </div>
@@ -333,7 +351,7 @@ function QuickCheckForm({
           <button
             type="submit"
             disabled={isAnalyzing}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-lg font-medium text-sm transition-colors shadow-sm"
+            className="flex items-center gap-2 bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-xl font-medium text-sm transition-colors shadow-md shadow-brand/20"
           >
             {isAnalyzing ? (
               <>
@@ -373,7 +391,7 @@ function Field({
         value={value}
         onChange={onChange}
         placeholder={placeholder}
-        className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/30"
       />
     </div>
   );
@@ -391,7 +409,7 @@ function SelectField({
         name={name}
         value={value}
         onChange={onChange}
-        className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/30"
       >
         <option value="">Select...</option>
         {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -469,16 +487,16 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
   };
 
   return (
-    <div className="max-w-4xl mx-auto h-full flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+    <div className="max-w-4xl mx-auto h-full flex flex-col bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden">
+      <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
         <h3 className="font-semibold text-slate-800">Policy Research Assistant</h3>
         <p className="text-xs text-slate-500 mt-1">Ask questions constrained to your selected rulebooks.</p>
       </div>
       
       <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
         <div className="flex gap-4">
-          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-            <Building2 className="w-4 h-4 text-blue-600" />
+          <div className="w-8 h-8 rounded-full bg-brand/10 flex items-center justify-center shrink-0 ring-1 ring-brand/20">
+            <Building2 className="w-4 h-4 text-brand" />
           </div>
           <div className="bg-slate-100 rounded-2xl rounded-tl-none px-5 py-3 text-sm text-slate-700 max-w-[80%]">
             {selectedAgencyNames.length > 0 ? (
@@ -492,13 +510,13 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
         {messages.map((msg, idx) => (
           <div key={idx} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
             {msg.role === 'assistant' && (
-              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-                <Building2 className="w-4 h-4 text-blue-600" />
+              <div className="w-8 h-8 rounded-full bg-brand/10 flex items-center justify-center shrink-0 ring-1 ring-brand/20">
+                <Building2 className="w-4 h-4 text-brand" />
               </div>
             )}
             <div className={`rounded-2xl px-5 py-3 text-sm max-w-[80%] whitespace-pre-wrap ${
               msg.role === 'user' 
-                ? 'bg-blue-600 text-white rounded-tr-none' 
+                ? 'bg-brand text-white rounded-tr-none shadow-sm' 
                 : 'bg-slate-100 text-slate-700 rounded-tl-none'
             }`}>
               {msg.content}
@@ -508,8 +526,8 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
 
         {isLoading && (
           <div className="flex gap-4">
-            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-              <Building2 className="w-4 h-4 text-blue-600" />
+            <div className="w-8 h-8 rounded-full bg-brand/10 flex items-center justify-center shrink-0 ring-1 ring-brand/20">
+              <Building2 className="w-4 h-4 text-brand" />
             </div>
             <div className="bg-slate-100 rounded-2xl rounded-tl-none px-5 py-3 text-sm text-slate-700 max-w-[80%] flex gap-1">
               <span className="animate-bounce">.</span><span className="animate-bounce" style={{animationDelay: '150ms'}}>.</span><span className="animate-bounce" style={{animationDelay: '300ms'}}>.</span>
@@ -527,13 +545,13 @@ function PolicyChatbotTab({ selectedAgencies, selectedAgencyNames }: { selectedA
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={noAgenciesSelected ? "Select an agency in the sidebar to begin..." : "Ask about AMI limits, LTV caps, zoning..."}
-            className="w-full bg-slate-50 border border-slate-200 rounded-full pl-5 pr-12 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full bg-slate-50 border border-slate-200 rounded-full pl-5 pr-12 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/30 disabled:opacity-60 disabled:cursor-not-allowed"
             disabled={isLoading || noAgenciesSelected}
           />
           <button 
             onClick={handleSend}
             disabled={!input.trim() || isLoading || noAgenciesSelected}
-            className="absolute right-2 top-2 p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="absolute right-2 top-2 p-1.5 bg-brand text-white rounded-full hover:bg-brand-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4" />
           </button>
