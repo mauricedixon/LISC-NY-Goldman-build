@@ -96,10 +96,12 @@ Instructions:
 - Do not use emojis or informal language.`;
 
     // 6. Call Anthropic with full conversation history for a coherent response
-    const anthropicMessages = messages.map(msg => ({
-      role: msg.role === 'user' ? 'user' : 'assistant',
-      content: msg.content
-    }));
+    const anthropicMessages = messages.map(
+      (msg: { role: string; content: string }) => ({
+        role: (msg.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: msg.content,
+      })
+    );
 
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
