@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LISC NY Public Data Engine",
-  description: "Automated underwriting assistant and compliance checker",
+  title: "LISC NY Compliance Assistant",
+  description: "Automated compliance assistant for affordable housing deal reviews",
 };
 
 export default function RootLayout({

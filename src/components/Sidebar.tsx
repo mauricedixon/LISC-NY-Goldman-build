@@ -146,7 +146,7 @@ export function Sidebar({ agencies, onToggleAgency, loanType, onLoanTypeChange }
 
       <div className="p-4 border-t border-[#1e332c]">
         <p className="text-[10px] text-slate-600 text-center">
-          Affordable housing underwriting assistant
+          Affordable housing compliance assistant
         </p>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { buildFallbackQuestions } from "@/lib/wizard-fallback";
 import { retrieveRulebookContext } from "@/utils/rag";
 import { parseClaudeJson } from "@/utils/parse-claude-json";
 import type { WizardQuestion } from "@/types/wizard";
@@ -31,6 +32,34 @@ function buildQuestionQuery(loanType: string, agencies: string[]): string {
     "Required submission fields, eligibility requirements, AMI limits, LTV caps,",
     "DSCR minimums, unit mix requirements, funding stack, compliance documentation.",
   ].join(" ");
+}
+
+function normalizeQuestions(questions: WizardQuestion[], loanType: string): WizardQuestion[] {
+  const seenFields = new Set<string>();
+  const normalized: WizardQuestion[] = [];
+
+  for (const q of questions ?? []) {
+    if (!q.id || !q.question || !q.field) continue;
+    if (seenFields.has(q.field)) continue;
+    seenFields.add(q.field);
+
+    normalized.push({
+      id: q.id,
+      category: q.category || "General",
+      field: q.field,
+      question: q.question,
+      helpText: q.helpText,
+      inputType: q.inputType || "text",
+      options: q.options,
+      required: q.required ?? true,
+    });
+  }
+
+  if (normalized.length < 5) {
+    return buildFallbackQuestions(loanType);
+  }
+
+  return normalized;
 }
 
 export async function POST(request: NextRequest) {
@@ -75,7 +104,7 @@ ${contextText}
 </rulebooks>
 
 Generate 10–14 interview questions, one per standard underwriting field where applicable.
-Each question should be conversational but precise — something an underwriter would ask a developer.
+Each question should be conversational but precise — one clear sentence an underwriter would ask a developer.
 
 Respond strictly in this JSON format:
 {
@@ -95,6 +124,7 @@ Respond strictly in this JSON format:
 
 Rules:
 - Cover all standard fields at least once across the question list.
+- Keep each question to one clear sentence.
 - For borough, use inputType "select" with NYC borough options.
 - Ground helpText in the rulebook excerpts when possible.
 - Order questions logically: basics → unit mix → financials → compliance → additional.
@@ -131,143 +161,4 @@ Rules:
     console.error("Generate questions API error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
-
-function normalizeQuestions(questions: WizardQuestion[], loanType: string): WizardQuestion[] {
-  const seenFields = new Set<string>();
-  const normalized: WizardQuestion[] = [];
-
-  for (const q of questions ?? []) {
-    if (!q.id || !q.question || !q.field) continue;
-    if (seenFields.has(q.field)) continue;
-    seenFields.add(q.field);
-
-    normalized.push({
-      id: q.id,
-      category: q.category || "General",
-      field: q.field,
-      question: q.question,
-      helpText: q.helpText,
-      inputType: q.inputType || "text",
-      options: q.options,
-      required: q.required ?? true,
-    });
-  }
-
-  if (normalized.length < 5) {
-    return buildFallbackQuestions(loanType);
-  }
-
-  return normalized;
-}
-
-function buildFallbackQuestions(loanType: string): WizardQuestion[] {
-  return [
-    {
-      id: "project_name",
-      category: "Project Basics",
-      field: "projectName",
-      question: "What is the project name?",
-      required: true,
-      inputType: "text",
-    },
-    {
-      id: "developer_name",
-      category: "Project Basics",
-      field: "developerName",
-      question: "Who is the developer or sponsor?",
-      required: true,
-      inputType: "text",
-    },
-    {
-      id: "loan_type",
-      category: "Project Basics",
-      field: "loanType",
-      question: "Confirm the loan type for this deal.",
-      helpText: `Sidebar selection: ${loanType}`,
-      required: true,
-      inputType: "text",
-    },
-    {
-      id: "borough",
-      category: "Project Basics",
-      field: "borough",
-      question: "Which NYC borough is the project located in?",
-      required: true,
-      inputType: "select",
-      options: ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"],
-    },
-    {
-      id: "total_units",
-      category: "Unit Mix",
-      field: "totalUnits",
-      question: "How many total units does the project include?",
-      required: true,
-      inputType: "number",
-    },
-    {
-      id: "affordable_units",
-      category: "Unit Mix",
-      field: "affordableUnits",
-      question: "How many units will be affordable?",
-      required: true,
-      inputType: "number",
-    },
-    {
-      id: "target_ami",
-      category: "Unit Mix",
-      field: "targetAMI",
-      question: "What AMI targets apply (e.g. 30%, 60%, 80%)?",
-      required: true,
-      inputType: "text",
-    },
-    {
-      id: "total_development_cost",
-      category: "Financials",
-      field: "totalDevelopmentCost",
-      question: "What is the total development cost?",
-      required: true,
-      inputType: "text",
-    },
-    {
-      id: "requested_loan_amount",
-      category: "Financials",
-      field: "requestedLoanAmount",
-      question: "What loan amount is being requested from LISC?",
-      required: true,
-      inputType: "text",
-    },
-    {
-      id: "ltv",
-      category: "Financials",
-      field: "ltv",
-      question: "What is the projected loan-to-value (LTV) percentage?",
-      required: true,
-      inputType: "number",
-    },
-    {
-      id: "dscr",
-      category: "Financials",
-      field: "dscr",
-      question: "What is the projected debt service coverage ratio (DSCR)?",
-      required: true,
-      inputType: "number",
-    },
-    {
-      id: "other_funding_sources",
-      category: "Financials",
-      field: "otherFundingSources",
-      question: "What other funding sources are in the capital stack?",
-      required: false,
-      inputType: "textarea",
-    },
-    {
-      id: "additional_notes",
-      category: "Additional",
-      field: "additionalNotes",
-      question: "Any other deal characteristics or compliance considerations?",
-      required: false,
-      inputType: "textarea",
-    },
-  ];
 }

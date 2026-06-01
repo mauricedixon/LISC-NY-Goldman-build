@@ -1,17 +1,27 @@
 "use client";
 
 import {
+  Building2,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ClipboardList,
+  Send,
   SkipForward,
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
 import { getAccentStyle, getCategoryStyle } from "@/lib/agencies";
+import {
+  buildFallbackQuestions,
+  getQuestionIndexByField,
+  remapAnswersByField,
+} from "@/lib/wizard-fallback";
+import {
+  fetchEnrichedQuestions,
+  getCachedWizardQuestions,
+  getWizardContextKey,
+  prefetchWizardQuestions,
+} from "@/lib/wizard-questions";
 import { AnalysisResults } from "./AnalysisResults";
 
 interface GuidedReviewWizardProps {
@@ -21,31 +31,22 @@ interface GuidedReviewWizardProps {
   setAnalysisResult: React.Dispatch<React.SetStateAction<AnalysisResult | null>>;
 }
 
-function StepDots({
-  total,
-  current,
-  progressClass,
-}: {
-  total: number;
-  current: number;
-  progressClass: string;
-}) {
-  return (
-    <div className="flex items-center gap-1.5 mt-3">
-      {Array.from({ length: total }).map((_, i) => (
-        <div
-          key={i}
-          className={`h-1.5 rounded-full transition-all duration-300 ${
-            i < current
-              ? `${progressClass} w-4`
-              : i === current
-                ? `${progressClass} w-6`
-                : "bg-slate-200 w-1.5"
-          }`}
-        />
-      ))}
-    </div>
-  );
+interface ChatMessage {
+  role: "assistant" | "user";
+  content: string;
+  questionId?: string;
+  helpText?: string;
+  category?: string;
+  skipped?: boolean;
+}
+
+function prefillLoanTypeAnswer(
+  questions: WizardQuestion[],
+  loanType: string
+): WizardAnswer[] {
+  const loanTypeQ = questions.find((q) => q.field === "loanType");
+  if (!loanTypeQ) return [];
+  return [{ questionId: loanTypeQ.id, value: loanType, skipped: false }];
 }
 
 export function GuidedReviewWizard({
@@ -56,143 +57,237 @@ export function GuidedReviewWizard({
 }: GuidedReviewWizardProps) {
   const [questions, setQuestions] = useState<WizardQuestion[]>([]);
   const [answers, setAnswers] = useState<WizardAnswer[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [currentValue, setCurrentValue] = useState("");
-  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+  const [isEnriching, setIsEnriching] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [hasStarted, setHasStarted] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [helpExpanded, setHelpExpanded] = useState(false);
+  const [enrichedApplied, setEnrichedApplied] = useState(false);
 
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const contextKey = getWizardContextKey(loanType, selectedAgencies);
   const accent = getAccentStyle(selectedAgencies);
   const currentQuestion = questions[currentIndex];
-  const progress = questions.length > 0 ? ((currentIndex + 1) / questions.length) * 100 : 0;
+  const progress =
+    questions.length > 0 ? ((currentIndex + 1) / questions.length) * 100 : 0;
 
-  const loadAnswerForIndex = useCallback(
-    (index: number, questionList: WizardQuestion[], answerList: WizardAnswer[]) => {
-      const q = questionList[index];
-      if (!q) {
-        setCurrentValue("");
-        return;
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isSynthesizing, isEnriching]);
+
+  useEffect(() => {
+    prefetchWizardQuestions(loanType, selectedAgencies);
+  }, [contextKey, loanType, selectedAgencies]);
+
+  const loadEnrichedQuestionsInBackground = useCallback(
+    async (initialQuestions: WizardQuestion[], initialAnswers: WizardAnswer[]) => {
+      setIsEnriching(true);
+      try {
+        const enriched = await fetchEnrichedQuestions(loanType, selectedAgencies);
+        const questionsChanged = enriched.some(
+          (q, i) =>
+            q.field !== initialQuestions[i]?.field || q.question !== initialQuestions[i]?.question
+        );
+
+        if (questionsChanged) {
+          setQuestions((prevQuestions) => {
+            setAnswers((prevAnswers) =>
+              remapAnswersByField(prevQuestions, enriched, prevAnswers.length ? prevAnswers : initialAnswers)
+            );
+            setCurrentIndex((idx) => {
+              const field = prevQuestions[idx]?.field;
+              if (!field) return idx;
+              const newIdx = getQuestionIndexByField(enriched, field);
+              return newIdx >= 0 ? newIdx : idx;
+            });
+            return enriched;
+          });
+        }
+        setEnrichedApplied(true);
+      } catch {
+        // Fallback questions remain in use
+      } finally {
+        setIsEnriching(false);
       }
-      const existing = answerList.find((a) => a.questionId === q.id);
-      setCurrentValue(existing && !existing.skipped ? existing.value : "");
-      setHelpExpanded(false);
     },
-    []
+    [loanType, selectedAgencies]
   );
 
-  const fetchQuestions = async () => {
+  const startReview = () => {
     if (selectedAgencies.length === 0) {
       setErrorMessage("Please select at least one target agency in the sidebar.");
       return;
     }
 
-    setIsLoadingQuestions(true);
     setErrorMessage("");
     setAnalysisResult(null);
     setIsComplete(false);
+    setEnrichedApplied(false);
+    setHelpExpanded(false);
 
-    try {
-      const response = await fetch("/api/wizard/generate-questions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ loanType, agencies: selectedAgencies }),
-      });
+    const cached = getCachedWizardQuestions(loanType, selectedAgencies);
+    const initialQuestions = cached ?? buildFallbackQuestions(loanType);
+    const initialAnswers = prefillLoanTypeAnswer(initialQuestions, loanType);
+    const firstQuestion = initialQuestions[0];
 
-      const data = await response.json();
+    setQuestions(initialQuestions);
+    setAnswers(initialAnswers);
+    setCurrentIndex(0);
+    setInputValue(firstQuestion?.field === "loanType" ? loanType : "");
+    setMessages(
+      firstQuestion
+        ? [
+            {
+              role: "assistant",
+              content: firstQuestion.question,
+              questionId: firstQuestion.id,
+              helpText: firstQuestion.helpText,
+              category: firstQuestion.category,
+            },
+          ]
+        : []
+    );
+    setHasStarted(true);
 
-      if (response.ok && data.success) {
-        const generated: WizardQuestion[] = data.questions;
-        setQuestions(generated);
-        setAnswers([]);
-        setCurrentIndex(0);
-        setHasStarted(true);
-
-        const loanTypeQ = generated.find((q) => q.field === "loanType");
-        if (loanTypeQ) {
-          setAnswers([{ questionId: loanTypeQ.id, value: loanType, skipped: false }]);
-          if (generated[0]?.field === "loanType") {
-            setCurrentValue(loanType);
-          }
-        }
-
-        loadAnswerForIndex(0, generated, []);
-      } else {
-        setErrorMessage(data.error || "Failed to generate questions.");
-      }
-    } catch {
-      setErrorMessage("Failed to connect to question generation service.");
-    } finally {
-      setIsLoadingQuestions(false);
+    if (!cached) {
+      loadEnrichedQuestionsInBackground(initialQuestions, initialAnswers);
+    } else {
+      setEnrichedApplied(true);
     }
   };
 
-  const saveCurrentAnswer = (value: string, skipped: boolean) => {
-    if (!currentQuestion) return;
-    setAnswers((prev) => {
-      const filtered = prev.filter((a) => a.questionId !== currentQuestion.id);
-      return [...filtered, { questionId: currentQuestion.id, value, skipped }];
-    });
+  const handleReset = () => {
+    setQuestions([]);
+    setAnswers([]);
+    setMessages([]);
+    setCurrentIndex(0);
+    setInputValue("");
+    setHasStarted(false);
+    setIsComplete(false);
+    setErrorMessage("");
+    setEnrichedApplied(false);
+    setAnalysisResult(null);
   };
 
-  const handleNext = () => {
-    if (!currentQuestion) return;
-    if (!currentValue.trim() && currentQuestion.required) {
+  useEffect(() => {
+    if (hasStarted) {
+      handleReset();
+    }
+    // Reset when sidebar context changes mid-interview
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextKey]);
+
+  const handleSend = () => {
+    if (!currentQuestion || isSynthesizing) return;
+
+    const trimmed = inputValue.trim();
+    if (!trimmed && currentQuestion.required) {
       setErrorMessage("This field is required. Enter a value or skip if optional.");
       return;
     }
-    saveCurrentAnswer(currentValue.trim(), false);
+
     setErrorMessage("");
+    const newAnswer: WizardAnswer = {
+      questionId: currentQuestion.id,
+      value: trimmed,
+      skipped: false,
+    };
+    const updatedAnswers = [
+      ...answers.filter((a) => a.questionId !== currentQuestion.id),
+      newAnswer,
+    ];
+    setAnswers(updatedAnswers);
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: trimmed || "(No answer provided)" },
+    ]);
+    setInputValue("");
+
     if (currentIndex < questions.length - 1) {
       const nextIndex = currentIndex + 1;
+      const nextQuestion = questions[nextIndex];
       setCurrentIndex(nextIndex);
-      const updatedAnswers = [
-        ...answers.filter((a) => a.questionId !== currentQuestion.id),
-        { questionId: currentQuestion.id, value: currentValue.trim(), skipped: false },
-      ];
-      loadAnswerForIndex(nextIndex, questions, updatedAnswers);
-    } else {
-      handleFinish([
-        ...answers.filter((a) => a.questionId !== currentQuestion.id),
-        { questionId: currentQuestion.id, value: currentValue.trim(), skipped: false },
+      setHelpExpanded(false);
+
+      if (nextQuestion.field === "loanType") {
+        setInputValue(loanType);
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: nextQuestion.question,
+          questionId: nextQuestion.id,
+          helpText: nextQuestion.helpText,
+          category: nextQuestion.category,
+        },
       ]);
+    } else {
+      handleFinish(updatedAnswers);
     }
   };
 
-  const handleBack = () => {
-    if (currentIndex === 0) return;
-    saveCurrentAnswer(currentValue.trim(), false);
-    setErrorMessage("");
-    const prevIndex = currentIndex - 1;
-    setCurrentIndex(prevIndex);
-    loadAnswerForIndex(prevIndex, questions, answers);
-  };
-
   const handleSkip = () => {
-    if (!currentQuestion) return;
-    saveCurrentAnswer("", true);
-    setErrorMessage("");
-    if (currentIndex < questions.length - 1) {
-      const nextIndex = currentIndex + 1;
-      setCurrentIndex(nextIndex);
+    if (!currentQuestion?.required) {
+      const newAnswer: WizardAnswer = {
+        questionId: currentQuestion.id,
+        value: "",
+        skipped: true,
+      };
       const updatedAnswers = [
         ...answers.filter((a) => a.questionId !== currentQuestion.id),
-        { questionId: currentQuestion.id, value: "", skipped: true },
+        newAnswer,
       ];
-      loadAnswerForIndex(nextIndex, questions, updatedAnswers);
-    } else {
-      handleFinish([
-        ...answers.filter((a) => a.questionId !== currentQuestion.id),
-        { questionId: currentQuestion.id, value: "", skipped: true },
-      ]);
+      setAnswers(updatedAnswers);
+      setErrorMessage("");
+      setInputValue("");
+
+      setMessages((prev) => [...prev, { role: "user", content: "Skipped", skipped: true }]);
+
+      if (currentIndex < questions.length - 1) {
+        const nextIndex = currentIndex + 1;
+        const nextQuestion = questions[nextIndex];
+        setCurrentIndex(nextIndex);
+        setHelpExpanded(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: nextQuestion.question,
+            questionId: nextQuestion.id,
+            helpText: nextQuestion.helpText,
+            category: nextQuestion.category,
+          },
+        ]);
+      } else {
+        handleFinish(updatedAnswers);
+      }
     }
   };
 
   const handleFinish = async (finalAnswers: WizardAnswer[]) => {
     setIsSynthesizing(true);
     setErrorMessage("");
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content: "Thanks — analyzing your responses against the rulebooks now.",
+      },
+    ]);
+
     try {
       const response = await fetch("/api/wizard/synthesize", {
         method: "POST",
@@ -208,6 +303,9 @@ export function GuidedReviewWizard({
       if (response.ok && data.success) {
         setAnalysisResult(data.analysis);
         setIsComplete(true);
+        setTimeout(() => {
+          resultsRef.current?.scrollIntoView({ behavior: "smooth" });
+        }, 100);
       } else {
         setErrorMessage(data.error || "Failed to synthesize report.");
       }
@@ -218,31 +316,16 @@ export function GuidedReviewWizard({
     }
   };
 
-  const handleReset = () => {
-    setQuestions([]);
-    setAnswers([]);
-    setCurrentIndex(0);
-    setCurrentValue("");
-    setHasStarted(false);
-    setIsComplete(false);
-    setErrorMessage("");
-    setAnalysisResult(null);
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey && currentQuestion?.inputType !== "textarea") {
+      e.preventDefault();
+      handleSend();
+    }
   };
 
-  const contextKey = `${loanType}:${selectedAgencies.join(",")}`;
-  const prevContextRef = useRef(contextKey);
-
-  useEffect(() => {
-    if (hasStarted && prevContextRef.current !== contextKey) {
-      handleReset();
-    }
-    prevContextRef.current = contextKey;
-  }, [contextKey, hasStarted, setAnalysisResult]);
-
-  const inputClass =
-    "w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/30 transition-shadow";
-
   if (!hasStarted) {
+    const prefetched = getCachedWizardQuestions(loanType, selectedAgencies);
+
     return (
       <div className="space-y-8">
         <div className="relative bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
@@ -253,39 +336,21 @@ export function GuidedReviewWizard({
             </div>
             <h3 className="font-semibold text-slate-800 text-xl mb-2">Guided Review</h3>
             <p className="text-sm text-slate-500 max-w-md mx-auto mb-6 leading-relaxed">
-              Walk through agency-specific underwriting questions one at a time, grounded in your
-              selected rulebooks.
+              A conversational walkthrough of your deal — starts instantly and enriches
+              questions from your rulebooks in the background.
             </p>
-            <ol className="text-left text-sm text-slate-600 space-y-2 max-w-xs mx-auto mb-8">
-              {[
-                "Questions tailored to your loan type and agencies",
-                "Answer one field at a time with rulebook context",
-                "Get a completeness report at the end",
-              ].map((step, i) => (
-                <li key={i} className="flex items-start gap-2.5">
-                  <span className="shrink-0 w-5 h-5 rounded-full bg-brand text-white text-[10px] font-bold flex items-center justify-center mt-0.5">
-                    {i + 1}
-                  </span>
-                  {step}
-                </li>
-              ))}
-            </ol>
+            {prefetched && selectedAgencies.length > 0 && (
+              <p className="text-xs text-emerald-600 font-medium mb-4">
+                Agency-specific questions are ready — start immediately.
+              </p>
+            )}
             <button
-              onClick={fetchQuestions}
-              disabled={isLoadingQuestions || selectedAgencies.length === 0}
-              className="inline-flex items-center gap-2 bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed text-white px-7 py-3 rounded-xl font-medium text-sm transition-colors shadow-md shadow-brand/20"
+              onClick={startReview}
+              disabled={selectedAgencies.length === 0}
+              className="inline-flex items-center gap-2 bg-[#0d6e52] hover:bg-[#0a5a43] disabled:opacity-50 disabled:cursor-not-allowed text-white px-7 py-3 rounded-xl font-medium text-sm transition-colors shadow-md"
             >
-              {isLoadingQuestions ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Generating questions from rulebooks...
-                </>
-              ) : (
-                <>
-                  <ChevronRight className="w-4 h-4" />
-                  Start Guided Review
-                </>
-              )}
+              <Send className="w-4 h-4" />
+              Start Guided Review
             </button>
             {errorMessage && <p className="text-sm text-red-500 mt-4">{errorMessage}</p>}
           </div>
@@ -316,161 +381,183 @@ export function GuidedReviewWizard({
             Start over
           </button>
         </div>
-        <AnalysisResults analysisResult={analysisResult} emptyMessage="No analysis available." />
+        <div ref={resultsRef}>
+          <AnalysisResults analysisResult={analysisResult} emptyMessage="No analysis available." />
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-8">
-      <div className="relative rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-emerald-50/60 via-white to-sky-50/30 pointer-events-none" />
-        <div className="relative bg-white/70 backdrop-blur-sm">
-          <div className="px-6 py-5 border-b border-slate-100">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <ClipboardList className="w-4 h-4 text-brand" />
-                <h3 className="font-semibold text-slate-800">Guided Review</h3>
-                {currentQuestion && (
-                  <span
-                    className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${getCategoryStyle(currentQuestion.category)}`}
-                  >
-                    {currentQuestion.category}
-                  </span>
+      <div className="max-w-4xl mx-auto flex flex-col bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden min-h-[520px]">
+        <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="font-semibold text-slate-800">Guided Review</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Question {currentIndex + 1} of {questions.length}
+                {isEnriching && !enrichedApplied && (
+                  <span className="ml-2 text-brand">· tailoring questions to rulebooks...</span>
                 )}
-              </div>
-              <button
-                onClick={handleReset}
-                className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
-              >
-                Cancel
-              </button>
+              </p>
             </div>
-            <p className="text-xs text-slate-500">
-              Question {currentIndex + 1} of {questions.length}
-            </p>
-            <div className="h-1 bg-slate-100 rounded-full overflow-hidden mt-3">
-              <div
-                className={`h-full ${accent.progress} rounded-full transition-all duration-500 ease-out`}
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <StepDots total={questions.length} current={currentIndex} progressClass={accent.progress} />
+            <button
+              onClick={handleReset}
+              className="text-xs text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+            >
+              Cancel
+            </button>
           </div>
+          <div className="h-1 bg-slate-100 rounded-full overflow-hidden mt-3">
+            <div
+              className={`h-full ${accent.progress} rounded-full transition-all duration-500 ease-out`}
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
 
-          <div className="px-6 py-8">
-            {isSynthesizing ? (
-              <div className="flex flex-col items-center justify-center py-12 text-slate-500">
-                <span className="w-8 h-8 border-2 border-emerald-200 border-t-brand rounded-full animate-spin mb-4" />
-                <p className="text-sm font-medium">Synthesizing completeness report...</p>
-                <p className="text-xs text-slate-400 mt-1">Analyzing your answers against rulebooks</p>
-              </div>
-            ) : currentQuestion ? (
-              <div className="max-w-2xl mx-auto">
-                <p className="text-xl font-semibold text-slate-800 leading-snug mb-4">
-                  {currentQuestion.question}
-                </p>
-
-                {currentQuestion.helpText && (
-                  <div className="mb-5">
-                    <button
-                      type="button"
-                      onClick={() => setHelpExpanded((v) => !v)}
-                      className="flex items-center gap-1.5 text-xs font-medium text-brand hover:text-brand-hover transition-colors"
-                    >
-                      <ChevronDown
-                        className={`w-3.5 h-3.5 transition-transform ${helpExpanded ? "rotate-180" : ""}`}
-                      />
-                      Why we ask this
-                    </button>
-                    {helpExpanded && (
-                      <div className="mt-2 pl-3 border-l-2 border-brand/30 text-sm text-slate-600 leading-relaxed">
-                        {currentQuestion.helpText}
+        <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-5 min-h-[320px]">
+          {messages.map((msg, idx) => (
+            <div
+              key={idx}
+              className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+            >
+              {msg.role === "assistant" && (
+                <div className="w-8 h-8 rounded-full bg-brand/10 flex items-center justify-center shrink-0 ring-1 ring-brand/20">
+                  <Building2 className="w-4 h-4 text-brand" />
+                </div>
+              )}
+              <div
+                className={`max-w-[85%] ${
+                  msg.role === "user"
+                    ? "bg-[#0d6e52] text-white rounded-2xl rounded-tr-none px-4 py-3 text-sm shadow-sm"
+                    : "space-y-2"
+                }`}
+              >
+                {msg.role === "assistant" ? (
+                  <>
+                    {msg.category && (
+                      <span
+                        className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getCategoryStyle(msg.category)}`}
+                      >
+                        {msg.category}
+                      </span>
+                    )}
+                    <p className="bg-slate-100 text-slate-800 rounded-2xl rounded-tl-none px-4 py-3 text-sm leading-relaxed">
+                      {msg.content}
+                    </p>
+                    {msg.helpText && idx === messages.length - 1 && (
+                      <div className="pl-1">
+                        <button
+                          type="button"
+                          onClick={() => setHelpExpanded((v) => !v)}
+                          className="flex items-center gap-1 text-xs font-medium text-brand"
+                        >
+                          <ChevronDown
+                            className={`w-3 h-3 transition-transform ${helpExpanded ? "rotate-180" : ""}`}
+                          />
+                          Why we ask this
+                        </button>
+                        {helpExpanded && (
+                          <p className="mt-1 text-xs text-slate-500 pl-3 border-l-2 border-brand/30 leading-relaxed">
+                            {msg.helpText}
+                          </p>
+                        )}
                       </div>
                     )}
-                  </div>
-                )}
-
-                {currentQuestion.inputType === "select" ? (
-                  <select
-                    value={currentValue}
-                    onChange={(e) => setCurrentValue(e.target.value)}
-                    className={inputClass}
-                  >
-                    <option value="">Select...</option>
-                    {(currentQuestion.options ?? []).map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                ) : currentQuestion.inputType === "textarea" ? (
-                  <textarea
-                    value={currentValue}
-                    onChange={(e) => setCurrentValue(e.target.value)}
-                    rows={4}
-                    placeholder="Enter your answer..."
-                    className={`${inputClass} resize-none`}
-                  />
+                  </>
                 ) : (
-                  <input
-                    type={currentQuestion.inputType === "number" ? "number" : "text"}
-                    value={currentValue}
-                    onChange={(e) => setCurrentValue(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleNext()}
-                    placeholder="Enter your answer..."
-                    className={inputClass}
-                    autoFocus
-                  />
+                  <span className={msg.skipped ? "italic opacity-80" : ""}>{msg.content}</span>
                 )}
               </div>
-            ) : null}
-          </div>
+            </div>
+          ))}
 
-          {!isSynthesizing && (
-            <div className="px-6 pb-6 flex items-center gap-3 max-w-2xl mx-auto">
-              <button
-                type="button"
-                onClick={handleBack}
-                disabled={currentIndex === 0}
-                className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-800 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-2 rounded-lg hover:bg-white/80 transition-colors"
+          {isSynthesizing && (
+            <div className="flex gap-3">
+              <div className="w-8 h-8 rounded-full bg-brand/10 flex items-center justify-center shrink-0 ring-1 ring-brand/20">
+                <Building2 className="w-4 h-4 text-brand" />
+              </div>
+              <div className="bg-slate-100 rounded-2xl rounded-tl-none px-4 py-3 text-sm text-slate-600 flex gap-1">
+                <span className="animate-bounce">.</span>
+                <span className="animate-bounce" style={{ animationDelay: "150ms" }}>
+                  .
+                </span>
+                <span className="animate-bounce" style={{ animationDelay: "300ms" }}>
+                  .
+                </span>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {!isSynthesizing && currentQuestion && (
+          <div className="p-4 border-t border-slate-100 bg-white space-y-3">
+            {currentQuestion.inputType === "select" ? (
+              <select
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
               >
-                <ChevronLeft className="w-4 h-4" />
-                Back
-              </button>
-              <div className="flex-1" />
-              {!currentQuestion?.required && (
+                <option value="">Select...</option>
+                {(currentQuestion.options ?? []).map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            ) : currentQuestion.inputType === "textarea" ? (
+              <textarea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                rows={3}
+                placeholder="Type your answer..."
+                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand/40"
+              />
+            ) : (
+              <input
+                type={currentQuestion.inputType === "number" ? "number" : "text"}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Type your answer..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-full pl-5 pr-12 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40"
+                autoFocus
+              />
+            )}
+
+            <div className="flex items-center gap-2">
+              {!currentQuestion.required && (
                 <button
                   type="button"
                   onClick={handleSkip}
-                  className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 px-3 py-2 rounded-lg hover:bg-white/80 transition-colors"
+                  className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 px-3 py-2 rounded-lg hover:bg-slate-50"
                 >
                   <SkipForward className="w-4 h-4" />
                   Skip
                 </button>
               )}
+              <div className="flex-1" />
               <button
                 type="button"
-                onClick={handleNext}
-                className="flex items-center gap-2 bg-brand hover:bg-brand-hover text-white px-6 py-2.5 rounded-xl font-medium text-sm transition-colors shadow-md shadow-brand/20"
+                onClick={handleSend}
+                disabled={!inputValue.trim() && currentQuestion.required}
+                className="inline-flex items-center gap-2 bg-[#0d6e52] hover:bg-[#0a5a43] disabled:opacity-50 text-white px-5 py-2.5 rounded-full text-sm font-medium transition-colors"
               >
-                {currentIndex === questions.length - 1 ? "Finish & Analyze" : "Next"}
-                <ChevronRight className="w-4 h-4" />
+                {currentIndex === questions.length - 1 ? "Finish & Analyze" : "Send"}
+                <Send className="w-4 h-4" />
               </button>
             </div>
-          )}
-
-          {errorMessage && (
-            <div className="px-6 pb-4 max-w-2xl mx-auto">
-              <p className="text-sm text-red-500">{errorMessage}</p>
-            </div>
-          )}
-        </div>
+            {errorMessage && <p className="text-sm text-red-500">{errorMessage}</p>}
+          </div>
+        )}
       </div>
 
       <AnalysisResults
         analysisResult={analysisResult}
-        emptyMessage="Complete all questions to see results."
+        emptyMessage="Complete the interview to see your checklist and compliance flags."
       />
     </div>
   );

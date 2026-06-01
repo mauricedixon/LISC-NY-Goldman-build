@@ -45,7 +45,7 @@ export default function Home() {
         <div className="flex items-start justify-between mb-5">
           <div>
             <p className="text-xs font-semibold text-brand uppercase tracking-wider mb-1">LISC NY</p>
-            <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Underwriting Assistant</h1>
+            <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Compliance Assistant</h1>
           </div>
         </div>
         <div className="flex gap-6">
