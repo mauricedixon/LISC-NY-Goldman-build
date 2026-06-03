@@ -22,12 +22,10 @@ import {
   getWizardContextKey,
   prefetchWizardQuestions,
 } from "@/lib/wizard-questions";
-import { AnalysisResults } from "./AnalysisResults";
 
 interface GuidedReviewWizardProps {
   selectedAgencies: string[];
   loanType: string;
-  analysisResult: AnalysisResult | null;
   setAnalysisResult: React.Dispatch<React.SetStateAction<AnalysisResult | null>>;
 }
 
@@ -52,7 +50,6 @@ function prefillLoanTypeAnswer(
 export function GuidedReviewWizard({
   selectedAgencies,
   loanType,
-  analysisResult,
   setAnalysisResult,
 }: GuidedReviewWizardProps) {
   const [questions, setQuestions] = useState<WizardQuestion[]>([]);
@@ -69,7 +66,6 @@ export function GuidedReviewWizard({
   const [enrichedApplied, setEnrichedApplied] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const resultsRef = useRef<HTMLDivElement>(null);
   const contextKey = getWizardContextKey(loanType, selectedAgencies);
   const accent = getAccentStyle(selectedAgencies);
   const currentQuestion = questions[currentIndex];
@@ -129,7 +125,6 @@ export function GuidedReviewWizard({
     }
 
     setErrorMessage("");
-    setAnalysisResult(null);
     setIsComplete(false);
     setEnrichedApplied(false);
     setHelpExpanded(false);
@@ -304,7 +299,7 @@ export function GuidedReviewWizard({
         setAnalysisResult(data.analysis);
         setIsComplete(true);
         setTimeout(() => {
-          resultsRef.current?.scrollIntoView({ behavior: "smooth" });
+          document.getElementById("completeness-results")?.scrollIntoView({ behavior: "smooth" });
         }, 100);
       } else {
         setErrorMessage(data.error || "Failed to synthesize report.");
@@ -327,8 +322,7 @@ export function GuidedReviewWizard({
     const prefetched = getCachedWizardQuestions(loanType, selectedAgencies);
 
     return (
-      <div className="space-y-8">
-        <div className="relative bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
+      <div className="relative bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-emerald-50/80 via-white to-sky-50/40 pointer-events-none" />
           <div className="relative px-8 py-10 text-center">
             <div className="w-16 h-16 bg-brand/10 rounded-2xl flex items-center justify-center mx-auto mb-5 ring-1 ring-brand/20">
@@ -355,18 +349,12 @@ export function GuidedReviewWizard({
             {errorMessage && <p className="text-sm text-red-500 mt-4">{errorMessage}</p>}
           </div>
         </div>
-        <AnalysisResults
-          analysisResult={analysisResult}
-          emptyMessage="Complete the guided review to see results."
-        />
-      </div>
     );
   }
 
   if (isComplete) {
     return (
-      <div className="space-y-8">
-        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-6 py-4 flex items-center justify-between">
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             <p className="text-sm font-medium text-emerald-800">
@@ -378,19 +366,14 @@ export function GuidedReviewWizard({
             onClick={handleReset}
             className="text-xs text-emerald-700 hover:text-emerald-900 font-medium"
           >
-            Start over
-          </button>
-        </div>
-        <div ref={resultsRef}>
-          <AnalysisResults analysisResult={analysisResult} emptyMessage="No analysis available." />
-        </div>
+          Start over
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
-      <div className="max-w-4xl mx-auto flex flex-col bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden min-h-[520px]">
+    <div className="max-w-4xl mx-auto flex flex-col bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden min-h-[520px]">
         <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -553,12 +536,6 @@ export function GuidedReviewWizard({
             {errorMessage && <p className="text-sm text-red-500">{errorMessage}</p>}
           </div>
         )}
-      </div>
-
-      <AnalysisResults
-        analysisResult={analysisResult}
-        emptyMessage="Complete the interview to see your checklist and compliance flags."
-      />
     </div>
   );
 }

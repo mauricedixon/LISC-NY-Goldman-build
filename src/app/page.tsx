@@ -131,18 +131,12 @@ function CompletenessCheckTab({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const handleModeChange = (mode: CheckMode) => {
-    setCheckMode(mode);
-    setAnalysisResult(null);
-    setErrorMessage("");
-  };
-
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex items-center gap-1 bg-white rounded-xl border border-border-subtle p-1 w-fit shadow-sm">
         <button
           type="button"
-          onClick={() => handleModeChange("quick")}
+          onClick={() => setCheckMode("quick")}
           className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
             checkMode === "quick"
               ? "bg-[#0d6e52] text-white shadow-sm"
@@ -154,7 +148,7 @@ function CompletenessCheckTab({
         </button>
         <button
           type="button"
-          onClick={() => handleModeChange("guided")}
+          onClick={() => setCheckMode("guided")}
           className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
             checkMode === "guided"
               ? "bg-[#0d6e52] text-white shadow-sm"
@@ -166,27 +160,34 @@ function CompletenessCheckTab({
         </button>
       </div>
 
-      {checkMode === "guided" ? (
-        <GuidedReviewWizard
-          selectedAgencies={selectedAgencies}
-          loanType={loanType}
-          analysisResult={analysisResult}
-          setAnalysisResult={setAnalysisResult}
-        />
-      ) : (
+      <div className={checkMode === "quick" ? "" : "hidden"}>
         <QuickCheckForm
           selectedAgencies={selectedAgencies}
           loanType={loanType}
           formData={formData}
           setFormData={setFormData}
-          analysisResult={analysisResult}
           setAnalysisResult={setAnalysisResult}
           isAnalyzing={isAnalyzing}
           setIsAnalyzing={setIsAnalyzing}
           errorMessage={errorMessage}
           setErrorMessage={setErrorMessage}
         />
-      )}
+      </div>
+
+      <div className={checkMode === "guided" ? "" : "hidden"}>
+        <GuidedReviewWizard
+          selectedAgencies={selectedAgencies}
+          loanType={loanType}
+          setAnalysisResult={setAnalysisResult}
+        />
+      </div>
+
+      <div id="completeness-results">
+        <AnalysisResults
+          analysisResult={analysisResult}
+          emptyMessage="Run a completeness check in Quick Check or Guided Review to see results."
+        />
+      </div>
     </div>
   );
 }
@@ -196,7 +197,6 @@ interface QuickCheckFormProps {
   loanType: string;
   formData: typeof EMPTY_FORM;
   setFormData: React.Dispatch<React.SetStateAction<typeof EMPTY_FORM>>;
-  analysisResult: AnalysisResult | null;
   setAnalysisResult: React.Dispatch<React.SetStateAction<AnalysisResult | null>>;
   isAnalyzing: boolean;
   setIsAnalyzing: React.Dispatch<React.SetStateAction<boolean>>;
@@ -209,7 +209,6 @@ function QuickCheckForm({
   loanType,
   formData,
   setFormData,
-  analysisResult,
   setAnalysisResult,
   isAnalyzing,
   setIsAnalyzing,
@@ -368,11 +367,6 @@ function QuickCheckForm({
           {errorMessage && <p className="text-sm text-red-500">{errorMessage}</p>}
         </div>
       </form>
-
-      <AnalysisResults
-        analysisResult={analysisResult}
-        emptyMessage="Fill in deal details and run the check."
-      />
     </div>
   );
 }
