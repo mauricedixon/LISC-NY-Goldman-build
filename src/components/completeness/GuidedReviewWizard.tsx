@@ -23,6 +23,14 @@ import {
   getWizardContextKey,
   prefetchWizardQuestions,
 } from "@/lib/wizard-questions";
+import {
+  applyFollowUpAnswer,
+  buildAcknowledgment,
+  getAnswerByField,
+  getFollowUpQuestion,
+  plainAcknowledgment,
+  type FollowUpQuestion,
+} from "@/lib/wizard-conversation";
 
 interface GuidedReviewWizardProps {
   selectedAgencies: string[];
@@ -45,6 +53,7 @@ interface ChatMessage {
   helpText?: string;
   category?: string;
   skipped?: boolean;
+  isAcknowledgment?: boolean;
 }
 
 function prefillLoanTypeAnswer(
@@ -78,11 +87,16 @@ export function GuidedReviewWizard({
   const [isComplete, setIsComplete] = useState(false);
   const [helpExpanded, setHelpExpanded] = useState(false);
   const [enrichedApplied, setEnrichedApplied] = useState(false);
+  const [activeFollowUp, setActiveFollowUp] = useState<FollowUpQuestion | null>(null);
+  const [completedFollowUpKeys, setCompletedFollowUpKeys] = useState<Set<string>>(
+    () => new Set()
+  );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const contextKey = getWizardContextKey(loanType, selectedAgencies);
   const accent = getAccentStyle(selectedAgencies);
-  const currentQuestion = questions[currentIndex];
+  const mainQuestion = questions[currentIndex];
+  const currentQuestion = activeFollowUp ?? mainQuestion;
   const progress =
     questions.length > 0 ? ((currentIndex + 1) / questions.length) * 100 : 0;
 
@@ -170,6 +184,8 @@ export function GuidedReviewWizard({
     setIsComplete(false);
     setEnrichedApplied(false);
     setHelpExpanded(false);
+    setActiveFollowUp(null);
+    setCompletedFollowUpKeys(new Set());
 
     const cached = getCachedWizardQuestions(loanType, selectedAgencies);
     const initialQuestions = cached ?? buildFallbackQuestions(loanType);
@@ -216,9 +232,113 @@ export function GuidedReviewWizard({
     setIsComplete(false);
     setErrorMessage("");
     setEnrichedApplied(false);
+    setActiveFollowUp(null);
+    setCompletedFollowUpKeys(new Set());
     setAnalysisResult(null);
     onAnalysisCleared?.();
     onWizardReset?.();
+  };
+
+  const upsertFieldAnswer = (
+    field: string,
+    value: string,
+    existingAnswers: WizardAnswer[]
+  ): WizardAnswer[] => {
+    const q = questions.find((x) => x.field === field);
+    if (!q) return existingAnswers;
+    return [
+      ...existingAnswers.filter((a) => a.questionId !== q.id),
+      { questionId: q.id, value, skipped: false },
+    ];
+  };
+
+  const appendAssistantMessages = (
+    items: Array<{
+      content: string;
+      questionId?: string;
+      helpText?: string;
+      category?: string;
+      isAcknowledgment?: boolean;
+    }>
+  ) => {
+    setMessages((prev) => [
+      ...prev,
+      ...items.map((item) => ({
+        role: "assistant" as const,
+        content: plainAcknowledgment(item.content),
+        questionId: item.questionId,
+        helpText: item.helpText,
+        category: item.category,
+        isAcknowledgment: item.isAcknowledgment,
+      })),
+    ]);
+  };
+
+  const advanceToNextMainQuestion = (updatedAnswers: WizardAnswer[]) => {
+    if (!mainQuestion || currentIndex >= questions.length - 1) {
+      handleFinish(updatedAnswers);
+      return;
+    }
+
+    const nextIndex = currentIndex + 1;
+    const nextQuestion = questions[nextIndex];
+    setCurrentIndex(nextIndex);
+    setHelpExpanded(false);
+    setActiveFollowUp(null);
+
+    if (nextQuestion.field === "loanType") {
+      setInputValue(loanType);
+    } else {
+      setInputValue("");
+    }
+
+    appendAssistantMessages([
+      {
+        content: nextQuestion.question,
+        questionId: nextQuestion.id,
+        helpText: nextQuestion.helpText,
+        category: nextQuestion.category,
+      },
+    ]);
+  };
+
+  const proceedAfterMainAnswer = (
+    triggerQuestion: WizardQuestion,
+    answerValue: string,
+    updatedAnswers: WizardAnswer[]
+  ) => {
+    const ack = buildAcknowledgment(
+      triggerQuestion,
+      answerValue,
+      updatedAnswers,
+      questions
+    );
+
+    appendAssistantMessages([{ content: ack, isAcknowledgment: true }]);
+
+    const followUp = getFollowUpQuestion(
+      triggerQuestion,
+      answerValue,
+      updatedAnswers,
+      questions,
+      completedFollowUpKeys
+    );
+
+    if (followUp) {
+      setActiveFollowUp(followUp);
+      setInputValue("");
+      appendAssistantMessages([
+        {
+          content: followUp.question,
+          questionId: followUp.id,
+          helpText: followUp.helpText,
+          category: followUp.category,
+        },
+      ]);
+      return;
+    }
+
+    advanceToNextMainQuestion(updatedAnswers);
   };
 
   useEffect(() => {
@@ -239,85 +359,82 @@ export function GuidedReviewWizard({
     }
 
     setErrorMessage("");
-    const newAnswer: WizardAnswer = {
-      questionId: currentQuestion.id,
-      value: trimmed,
-      skipped: false,
-    };
-    const updatedAnswers = [
-      ...answers.filter((a) => a.questionId !== currentQuestion.id),
-      newAnswer,
-    ];
-    setAnswers(updatedAnswers);
-    syncField(currentQuestion.field, trimmed);
-
     setMessages((prev) => [
       ...prev,
       { role: "user", content: trimmed || "(No answer provided)" },
     ]);
     setInputValue("");
 
-    if (currentIndex < questions.length - 1) {
-      const nextIndex = currentIndex + 1;
-      const nextQuestion = questions[nextIndex];
-      setCurrentIndex(nextIndex);
-      setHelpExpanded(false);
+    if (activeFollowUp) {
+      const existing = getAnswerByField(answers, questions, activeFollowUp.storeInField);
+      const merged = applyFollowUpAnswer(existing, activeFollowUp, trimmed);
 
-      if (nextQuestion.field === "loanType") {
-        setInputValue(loanType);
-      }
+      let updatedAnswers = [
+        ...answers.filter((a) => a.questionId !== activeFollowUp.id),
+        { questionId: activeFollowUp.id, value: trimmed, skipped: false },
+      ];
+      updatedAnswers = upsertFieldAnswer(activeFollowUp.storeInField, merged, updatedAnswers);
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: nextQuestion.question,
-          questionId: nextQuestion.id,
-          helpText: nextQuestion.helpText,
-          category: nextQuestion.category,
-        },
-      ]);
-    } else {
-      handleFinish(updatedAnswers);
+      setAnswers(updatedAnswers);
+      syncField(activeFollowUp.storeInField, merged);
+      setCompletedFollowUpKeys((prev) => new Set(prev).add(activeFollowUp.followUpKey));
+      setActiveFollowUp(null);
+
+      appendAssistantMessages([{ content: "Thanks — noted.", isAcknowledgment: true }]);
+      advanceToNextMainQuestion(updatedAnswers);
+      return;
     }
+
+    if (!mainQuestion) return;
+
+    const newAnswer: WizardAnswer = {
+      questionId: mainQuestion.id,
+      value: trimmed,
+      skipped: false,
+    };
+    const updatedAnswers = [
+      ...answers.filter((a) => a.questionId !== mainQuestion.id),
+      newAnswer,
+    ];
+    setAnswers(updatedAnswers);
+    syncField(mainQuestion.field, trimmed);
+
+    proceedAfterMainAnswer(mainQuestion, trimmed, updatedAnswers);
   };
 
   const handleSkip = () => {
-    if (!currentQuestion?.required) {
-      const newAnswer: WizardAnswer = {
-        questionId: currentQuestion.id,
-        value: "",
-        skipped: true,
-      };
-      const updatedAnswers = [
-        ...answers.filter((a) => a.questionId !== currentQuestion.id),
-        newAnswer,
-      ];
-      setAnswers(updatedAnswers);
-      syncField(currentQuestion.field, "");
-      setErrorMessage("");
-      setInputValue("");
+    if (!currentQuestion || currentQuestion.required) return;
 
-      setMessages((prev) => [...prev, { role: "user", content: "Skipped", skipped: true }]);
+    setErrorMessage("");
+    setInputValue("");
+    setMessages((prev) => [...prev, { role: "user", content: "Skipped", skipped: true }]);
 
-      if (currentIndex < questions.length - 1) {
-        const nextIndex = currentIndex + 1;
-        const nextQuestion = questions[nextIndex];
-        setCurrentIndex(nextIndex);
-        setHelpExpanded(false);
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: nextQuestion.question,
-            questionId: nextQuestion.id,
-            helpText: nextQuestion.helpText,
-            category: nextQuestion.category,
-          },
-        ]);
-      } else {
-        handleFinish(updatedAnswers);
-      }
+    if (activeFollowUp) {
+      setCompletedFollowUpKeys((prev) => new Set(prev).add(activeFollowUp.followUpKey));
+      setActiveFollowUp(null);
+      appendAssistantMessages([{ content: "No problem — moving on.", isAcknowledgment: true }]);
+      advanceToNextMainQuestion(answers);
+      return;
+    }
+
+    if (!mainQuestion) return;
+
+    const newAnswer: WizardAnswer = {
+      questionId: mainQuestion.id,
+      value: "",
+      skipped: true,
+    };
+    const updatedAnswers = [
+      ...answers.filter((a) => a.questionId !== mainQuestion.id),
+      newAnswer,
+    ];
+    setAnswers(updatedAnswers);
+    syncField(mainQuestion.field, "");
+
+    if (currentIndex < questions.length - 1) {
+      advanceToNextMainQuestion(updatedAnswers);
+    } else {
+      handleFinish(updatedAnswers);
     }
   };
 
@@ -431,6 +548,9 @@ export function GuidedReviewWizard({
               <h3 className="font-semibold text-slate-800">Guided Review</h3>
               <p className="text-xs text-slate-500 mt-0.5">
                 Question {currentIndex + 1} of {questions.length}
+                {activeFollowUp && (
+                  <span className="ml-2 text-brand">· follow-up</span>
+                )}
                 {isEnriching && !enrichedApplied && (
                   <span className="ml-2 text-brand">· tailoring questions to rulebooks...</span>
                 )}
@@ -471,17 +591,25 @@ export function GuidedReviewWizard({
               >
                 {msg.role === "assistant" ? (
                   <>
-                    {msg.category && (
-                      <span
-                        className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getCategoryStyle(msg.category)}`}
-                      >
-                        {msg.category}
-                      </span>
+                    {msg.isAcknowledgment ? (
+                      <p className="text-xs text-slate-500 italic pl-1 py-1 leading-relaxed">
+                        {msg.content}
+                      </p>
+                    ) : (
+                      <>
+                        {msg.category && (
+                          <span
+                            className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getCategoryStyle(msg.category)}`}
+                          >
+                            {msg.category}
+                          </span>
+                        )}
+                        <p className="bg-slate-100 text-slate-800 rounded-2xl rounded-tl-none px-4 py-3 text-sm leading-relaxed">
+                          {msg.content}
+                        </p>
+                      </>
                     )}
-                    <p className="bg-slate-100 text-slate-800 rounded-2xl rounded-tl-none px-4 py-3 text-sm leading-relaxed">
-                      {msg.content}
-                    </p>
-                    {msg.helpText && idx === messages.length - 1 && (
+                    {msg.helpText && idx === messages.length - 1 && !msg.isAcknowledgment && (
                       <div className="pl-1">
                         <button
                           type="button"
@@ -580,7 +708,11 @@ export function GuidedReviewWizard({
                 disabled={!inputValue.trim() && currentQuestion.required}
                 className="inline-flex items-center gap-2 bg-[#0d6e52] hover:bg-[#0a5a43] disabled:opacity-50 text-white px-5 py-2.5 rounded-full text-sm font-medium transition-colors"
               >
-                {currentIndex === questions.length - 1 ? "Finish & Analyze" : "Send"}
+                {activeFollowUp
+                  ? "Continue"
+                  : currentIndex === questions.length - 1
+                    ? "Finish & Analyze"
+                    : "Send"}
                 <Send className="w-4 h-4" />
               </button>
             </div>

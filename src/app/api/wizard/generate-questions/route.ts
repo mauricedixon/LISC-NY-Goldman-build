@@ -104,7 +104,7 @@ ${contextText}
 </rulebooks>
 
 Generate 10–14 interview questions, one per standard underwriting field where applicable.
-Each question should be conversational but precise — one clear sentence an underwriter would ask a developer.
+Each question must be SHORT (under 12 words), conversational, and direct — like a quick chat, not a form label.
 
 Respond strictly in this JSON format:
 {
@@ -124,7 +124,8 @@ Respond strictly in this JSON format:
 
 Rules:
 - Cover all standard fields at least once across the question list.
-- Keep each question to one clear sentence.
+- Keep each question under 12 words (one short sentence max).
+- Avoid filler phrases like "Please provide" or "Can you tell me about".
 - For borough, use inputType "select" with NYC borough options.
 - Ground helpText in the rulebook excerpts when possible.
 - Order questions logically: basics → unit mix → financials → compliance → additional.
