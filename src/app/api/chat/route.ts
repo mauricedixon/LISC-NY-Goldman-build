@@ -88,10 +88,10 @@ ${contextText}
 
 Instructions:
 - Only use information from the rulebook excerpts above. Do not reference any agencies, rules, or data outside of what is provided.
-- Always cite the specific Source and Page Number when referencing the rulebooks.
+- Always cite the specific Source and Page Number when referencing the rulebooks, using the format [Source: Agency - Title, Page N].
 - If the answer is not clearly present in the excerpts above, say so directly. Do not guess or supplement with outside knowledge.
 - Write in a professional, formal tone suitable for financial underwriting professionals.
-- Do NOT use any markdown syntax. No hashtags for headers, no asterisks for bold, no backticks. Write in plain text only.
+- Do NOT use markdown headers or bullet syntax. Write in plain text. Use [Source: ...] tags for citations so they can be highlighted.
 - You may use numbered lists or dashed bullet points for clarity when listing multiple items.
 - Do not use emojis or informal language.`;
 

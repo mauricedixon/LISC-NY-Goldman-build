@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { applyWizardAnswersToFormData, type DealFieldKey } from "@/lib/wizard-form-sync";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
 import { getAccentStyle, getCategoryStyle } from "@/lib/agencies";
 import {
@@ -27,6 +28,14 @@ interface GuidedReviewWizardProps {
   selectedAgencies: string[];
   loanType: string;
   setAnalysisResult: React.Dispatch<React.SetStateAction<AnalysisResult | null>>;
+  onAnalysisComplete?: () => void;
+  onAnalysisCleared?: () => void;
+  onDealSync?: (field: DealFieldKey, value: string) => void;
+  onWizardAnswersSync?: (
+    questions: WizardQuestion[],
+    answers: WizardAnswer[]
+  ) => void;
+  onWizardReset?: () => void;
 }
 
 interface ChatMessage {
@@ -51,6 +60,11 @@ export function GuidedReviewWizard({
   selectedAgencies,
   loanType,
   setAnalysisResult,
+  onAnalysisComplete,
+  onAnalysisCleared,
+  onDealSync,
+  onWizardAnswersSync,
+  onWizardReset,
 }: GuidedReviewWizardProps) {
   const [questions, setQuestions] = useState<WizardQuestion[]>([]);
   const [answers, setAnswers] = useState<WizardAnswer[]>([]);
@@ -71,6 +85,28 @@ export function GuidedReviewWizard({
   const currentQuestion = questions[currentIndex];
   const progress =
     questions.length > 0 ? ((currentIndex + 1) / questions.length) * 100 : 0;
+
+  const syncField = (field: string, value: string) => {
+    onDealSync?.(field as DealFieldKey, value);
+  };
+
+  const syncAllAnswers = (
+    qs: WizardQuestion[],
+    ans: WizardAnswer[]
+  ) => {
+    if (onWizardAnswersSync) {
+      onWizardAnswersSync(qs, ans);
+    } else {
+      const data = applyWizardAnswersToFormData(qs, ans, loanType);
+      for (const q of qs) {
+        const answer = ans.find((a) => a.questionId === q.id);
+        if (answer && !answer.skipped && answer.value.trim()) {
+          syncField(q.field, answer.value.trim());
+        }
+      }
+      syncField("loanType", loanType);
+    }
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -96,9 +132,15 @@ export function GuidedReviewWizard({
 
         if (questionsChanged) {
           setQuestions((prevQuestions) => {
-            setAnswers((prevAnswers) =>
-              remapAnswersByField(prevQuestions, enriched, prevAnswers.length ? prevAnswers : initialAnswers)
-            );
+            setAnswers((prevAnswers) => {
+              const remapped = remapAnswersByField(
+                prevQuestions,
+                enriched,
+                prevAnswers.length ? prevAnswers : initialAnswers
+              );
+              queueMicrotask(() => syncAllAnswers(enriched, remapped));
+              return remapped;
+            });
             setCurrentIndex((idx) => {
               const field = prevQuestions[idx]?.field;
               if (!field) return idx;
@@ -152,6 +194,10 @@ export function GuidedReviewWizard({
         : []
     );
     setHasStarted(true);
+    syncField("loanType", loanType);
+    if (initialAnswers.length) {
+      syncAllAnswers(initialQuestions, initialAnswers);
+    }
 
     if (!cached) {
       loadEnrichedQuestionsInBackground(initialQuestions, initialAnswers);
@@ -171,6 +217,8 @@ export function GuidedReviewWizard({
     setErrorMessage("");
     setEnrichedApplied(false);
     setAnalysisResult(null);
+    onAnalysisCleared?.();
+    onWizardReset?.();
   };
 
   useEffect(() => {
@@ -201,6 +249,7 @@ export function GuidedReviewWizard({
       newAnswer,
     ];
     setAnswers(updatedAnswers);
+    syncField(currentQuestion.field, trimmed);
 
     setMessages((prev) => [
       ...prev,
@@ -245,6 +294,7 @@ export function GuidedReviewWizard({
         newAnswer,
       ];
       setAnswers(updatedAnswers);
+      syncField(currentQuestion.field, "");
       setErrorMessage("");
       setInputValue("");
 
@@ -297,6 +347,7 @@ export function GuidedReviewWizard({
       const data = await response.json();
       if (response.ok && data.success) {
         setAnalysisResult(data.analysis);
+        onAnalysisComplete?.();
         setIsComplete(true);
         setTimeout(() => {
           document.getElementById("completeness-results")?.scrollIntoView({ behavior: "smooth" });

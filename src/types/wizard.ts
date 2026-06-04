@@ -35,7 +35,14 @@ export interface ComplianceFlag {
   severity: "High" | "Medium" | "Low";
 }
 
+export interface ActionItem {
+  item: string;
+  priority?: "high" | "medium" | "low";
+}
+
 export interface AnalysisResult {
+  executiveSummary?: string;
+  actionItems?: ActionItem[];
   completenessChecklist: CompletenessChecklistItem[];
   complianceFlags: ComplianceFlag[];
 }

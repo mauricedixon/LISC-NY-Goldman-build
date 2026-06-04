@@ -4,6 +4,7 @@ import { buildDealSummary, type DealFormData } from '@/types/deal';
 import { retrieveRulebookContext } from '@/utils/rag';
 import { parseClaudeJson } from '@/utils/parse-claude-json';
 import type { AnalysisResult } from '@/types/wizard';
+import { ANALYSIS_JSON_SCHEMA, ANALYSIS_FIELD_GUIDANCE } from '@/lib/analysis-prompt-schema';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -38,30 +39,14 @@ ${dealSummary}
 </deal_data>
 
 Respond strictly in the following JSON format:
-{
-  "completenessChecklist": [
-    {
-      "field": "Human-readable field name",
-      "status": "provided" | "missing" | "needs_clarification",
-      "note": "Optional short note, especially for needs_clarification items"
-    }
-  ],
-  "complianceFlags": [
-    {
-      "issue": "Description of the violation or concern",
-      "citation": "Exact citation from the rulebook including source and page number",
-      "severity": "High" | "Medium" | "Low"
-    }
-  ]
-}
+${ANALYSIS_JSON_SCHEMA}
 
-For the completenessChecklist, evaluate these standard fields: Project Name, Developer/Sponsor, Loan Type, Borough/Location, Total Units, Affordable Units, AMI Targets, Total Development Cost, Requested Loan Amount, LTV, DSCR, Other Funding Sources.
-A field is "provided" if a real value was given, "missing" if it was left blank or says [Not provided], and "needs_clarification" if the value seems incomplete, inconsistent, or unusual.
+${ANALYSIS_FIELD_GUIDANCE}
 `;
 
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
+      max_tokens: 5000,
       temperature: 0,
       system: 'You are a precise, analytical underwriting assistant. You only output valid JSON.',
       messages: [{ role: 'user', content: prompt }],
