@@ -7,6 +7,7 @@ import { ContextStrip } from "@/components/ContextStrip";
 import { PolicyChatWidget } from "@/components/PolicyChatWidget";
 import { AnalysisResults } from "@/components/completeness/AnalysisResults";
 import { GuidedReviewWizard } from "@/components/completeness/GuidedReviewWizard";
+import { TermSheetGuideSection } from "@/components/completeness/TermSheetGuideSection";
 import { buildAnalysisInputFingerprint } from "@/lib/compliance-snapshot";
 import { applyWizardAnswersToFormData, type DealFieldKey } from "@/lib/wizard-form-sync";
 import { EMPTY_DEAL_FORM } from "@/types/deal";
@@ -130,11 +131,21 @@ export default function Home() {
               modeLabel={modeLabel}
             />
 
+            <TermSheetGuideSection
+              loanType={loanType}
+              selectedAgencies={selectedAgencies}
+              selectedAgencyNames={selectedAgencyNames}
+              fundingPrograms={formData.fundingPrograms}
+            />
+
             <div className="bg-white rounded-xl border border-border-subtle p-4 text-sm text-slate-600 space-y-2 shadow-sm">
               <p>
+                <span className="font-semibold text-slate-800">Term Sheet Guide</span> — primary
+                checklist from your funding programs and rulebooks (above)
+              </p>
+              <p>
                 <span className="font-semibold text-slate-800">Guided Review</span> — quick
-                conversational deal context (term sheet lookup → Policy Chat; Term Sheet Guide
-                coming soon)
+                conversational deal context
               </p>
               <p>
                 <span className="font-semibold text-slate-800">Manual Review</span> — enter deal
