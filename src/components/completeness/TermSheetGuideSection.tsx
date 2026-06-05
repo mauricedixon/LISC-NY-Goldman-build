@@ -299,7 +299,7 @@ export function TermSheetGuideSection({
   const handleGenerate = async () => {
     if (!canGenerate) {
       setErrorMessage(
-        "Select at least one funding program and one target agency in the sidebar."
+        "Select at least one funding program and one rulebook in the sidebar."
       );
       return;
     }
@@ -366,8 +366,7 @@ export function TermSheetGuideSection({
           )}
           {!canGenerate && (
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-3">
-              Select funding programs and target agencies in the sidebar to generate a
-              guide.
+              Select funding programs and rulebooks in the sidebar to generate a guide.
             </p>
           )}
           {errorMessage && (

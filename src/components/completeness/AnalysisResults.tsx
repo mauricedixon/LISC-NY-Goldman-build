@@ -165,13 +165,13 @@ export function AnalysisResults({
   if (!analysisResult) {
     return (
       <div className="space-y-4">
-        <p className="text-sm font-medium text-slate-600">Analysis results</p>
+        <p className="text-sm font-medium text-slate-600">Optional deal check</p>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden flex flex-col">
             <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
               <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                 <FileText className="w-4 h-4 text-brand" />
-                Completeness Checklist
+                Deal Checklist
               </h3>
             </div>
             <div className="p-6">
@@ -180,9 +180,9 @@ export function AnalysisResults({
                 title={emptyMessage ?? "Run the check to see results."}
                 steps={
                   emptySteps ?? [
-                    "Select loan type and agencies in the sidebar",
-                    "Enter deal details or start a guided review",
-                    "Run the check to generate your deal snapshot and report",
+                    "Select loan type, rulebooks, and funding programs in the sidebar",
+                    "Use Guided or Manual Review when you want a deal-level check",
+                    "Results appear here with a deal snapshot, flags, and action items",
                   ]
                 }
               />
@@ -210,7 +210,7 @@ export function AnalysisResults({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm font-medium text-slate-600">Analysis results</p>
+      <p className="text-sm font-medium text-slate-600">Optional deal check</p>
 
       <DealSnapshotPanel
         analysis={analysisResult}
@@ -250,7 +250,7 @@ export function AnalysisResults({
           <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
             <h3 className="font-semibold text-slate-800 flex items-center gap-2">
               <FileText className="w-4 h-4 text-brand" />
-              Completeness Checklist
+              Deal Checklist
             </h3>
           </div>
           <div className="p-6 flex-1 flex flex-col">

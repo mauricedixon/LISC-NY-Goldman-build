@@ -52,6 +52,9 @@ export async function fetchTermSheetGuide(
       if (!response.ok || !data.success) {
         throw new Error(data.error || "Failed to generate term sheet guide");
       }
+      if (data.timingMs && process.env.NODE_ENV === "development") {
+        console.info("[term-sheet-guide] timing", data.timingMs);
+      }
       cache.set(key, data.guide as TermSheetGuideResult);
       inflight.delete(key);
       return data.guide as TermSheetGuideResult;

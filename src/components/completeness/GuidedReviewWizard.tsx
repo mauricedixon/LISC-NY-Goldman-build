@@ -178,7 +178,7 @@ export function GuidedReviewWizard({
 
   const startReview = () => {
     if (selectedAgencies.length === 0) {
-      setErrorMessage("Please select at least one target agency in the sidebar.");
+      setErrorMessage("Please select at least one rulebook in the sidebar.");
       return;
     }
 
@@ -501,8 +501,9 @@ export function GuidedReviewWizard({
             </div>
             <h3 className="font-semibold text-slate-800 text-xl mb-2">Guided Review</h3>
             <p className="text-sm text-slate-500 max-w-md mx-auto mb-6 leading-relaxed">
-              Quick conversational deal context — not a term sheet lookup. Use Policy Chat
-              (bottom-right) for ad-hoc rulebook questions; Term Sheet Guide coming soon.
+              Quick conversational deal context — not a term sheet lookup. Use the Term Sheet
+              Guide above for program checklists, or Policy Chat (bottom-right) for ad-hoc
+              rulebook questions.
             </p>
             {prefetched && selectedAgencies.length > 0 && (
               <p className="text-xs text-emerald-600 font-medium mb-4">

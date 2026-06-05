@@ -217,7 +217,12 @@ export default function Home() {
                 loanType={loanType}
                 selectedAgencyNames={selectedAgencyNames}
                 isStale={isAnalysisStale}
-                emptyMessage="Check a deal in Guided or Manual Review to see results."
+                emptyMessage="Optional — check a deal in Guided or Manual Review to see results."
+                emptySteps={[
+                  "Start with the Term Sheet Guide above for program requirements",
+                  "Use Guided or Manual Review for a deal-level rulebook check",
+                  "Snapshot, flags, and action items appear below",
+                ]}
               />
             </div>
           </div>
@@ -276,7 +281,7 @@ function ManualReviewForm({
 
     if (selectedAgencies.length === 0) {
       setErrorMessage(
-        "Please select at least one target agency in the sidebar before running the check."
+        "Please select at least one rulebook in the sidebar before running the check."
       );
       return;
     }

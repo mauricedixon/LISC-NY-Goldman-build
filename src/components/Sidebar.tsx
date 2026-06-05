@@ -119,13 +119,13 @@ export function Sidebar({
         <div className="space-y-3 px-1">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Target Agencies
+              Rulebooks to Search
             </h2>
             <span className="text-[10px] bg-brand/20 text-emerald-300 px-2 py-0.5 rounded-full font-semibold">
               {selectedCount} selected
             </span>
           </div>
-          <p className="text-xs text-slate-500">Rulebooks to constrain AI search.</p>
+          <p className="text-xs text-slate-500">Which agency rulebooks constrain AI search.</p>
 
           <div className="space-y-1">
             {agencies.map((agency) => {
@@ -176,7 +176,7 @@ export function Sidebar({
             </span>
           </div>
           <p className="text-xs text-slate-500">
-            Capital stack / programs in this deal — not the same as target agencies above.
+            Programs in this deal (capital stack) — separate from rulebooks above.
           </p>
 
           <div className="space-y-1">

@@ -146,8 +146,7 @@ export function DealSnapshotPanel({
             </ul>
             {checklist.length > parametersToShow.length && (
               <p className="text-[11px] text-slate-400 mt-2">
-                +{checklist.length - parametersToShow.length} more in the completeness checklist
-                below
+                +{checklist.length - parametersToShow.length} more in the deal checklist below
               </p>
             )}
           </div>

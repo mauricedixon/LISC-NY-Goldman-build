@@ -53,8 +53,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const startedAt = Date.now();
     const queryText = buildGuideQuery(loanType, fundingPrograms, agencies);
+    const ragStartedAt = Date.now();
     const { contextText } = await retrieveRulebookContext(queryText, agencies, 10);
+    const ragMs = Date.now() - ragStartedAt;
 
     const prompt = `
 You are an expert affordable housing underwriter assistant for LISC NY.
@@ -75,6 +78,7 @@ ${TERM_SHEET_GUIDE_JSON_SCHEMA}
 ${TERM_SHEET_GUIDE_FIELD_GUIDANCE}
 `;
 
+    const claudeStartedAt = Date.now();
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 3500,
@@ -84,7 +88,17 @@ ${TERM_SHEET_GUIDE_FIELD_GUIDANCE}
       messages: [{ role: "user", content: prompt }],
     });
 
+    const claudeMs = Date.now() - claudeStartedAt;
     const responseText = msg.content[0].type === "text" ? msg.content[0].text : "{}";
+
+    const timingMs = {
+      rag: ragMs,
+      claude: claudeMs,
+      total: Date.now() - startedAt,
+    };
+    console.log(
+      `[term-sheet-guide] rag=${timingMs.rag}ms claude=${timingMs.claude}ms total=${timingMs.total}ms`
+    );
 
     let guide: TermSheetGuideResult;
     try {
@@ -102,7 +116,7 @@ ${TERM_SHEET_GUIDE_FIELD_GUIDANCE}
       );
     }
 
-    return NextResponse.json({ success: true, guide });
+    return NextResponse.json({ success: true, guide, timingMs });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal server error";
     console.error("Term sheet guide API error:", error);
