@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     }
 
     const queryText = buildGuideQuery(loanType, fundingPrograms, agencies);
-    const { contextText } = await retrieveRulebookContext(queryText, agencies, 16);
+    const { contextText } = await retrieveRulebookContext(queryText, agencies, 10);
 
     const prompt = `
 You are an expert affordable housing underwriter assistant for LISC NY.
@@ -77,7 +77,7 @@ ${TERM_SHEET_GUIDE_FIELD_GUIDANCE}
 
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 6000,
+      max_tokens: 3500,
       temperature: 0,
       system:
         "You are a precise underwriting assistant. You only output valid JSON grounded in provided rulebooks.",
@@ -88,7 +88,12 @@ ${TERM_SHEET_GUIDE_FIELD_GUIDANCE}
 
     let guide: TermSheetGuideResult;
     try {
-      guide = parseClaudeJson<TermSheetGuideResult>(responseText);
+      const parsed = parseClaudeJson<TermSheetGuideResult>(responseText);
+      guide = {
+        summary: parsed.summary ?? "",
+        keyThresholds: parsed.keyThresholds ?? [],
+        sections: parsed.sections ?? [],
+      };
     } catch {
       console.error("JSON parse error — raw response:", responseText.slice(0, 500));
       return NextResponse.json(

@@ -1,10 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { BookOpen, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { buildTermSheetGuideFingerprint } from "@/lib/term-sheet-guide";
+import {
+  fetchTermSheetGuide,
+  getCachedTermSheetGuide,
+  isTermSheetGuidePrefetching,
+  prefetchTermSheetGuide,
+} from "@/lib/term-sheet-guide-cache";
 import { formatFundingPrograms } from "@/types/deal";
-import type { TermSheetGuideResult } from "@/types/term-sheet-guide";
+import type {
+  TermSheetChecklistItem,
+  TermSheetGuideResult,
+  TermSheetItemPriority,
+  TermSheetKeyThreshold,
+} from "@/types/term-sheet-guide";
 import { FormattedCitationText } from "@/utils/format-citations";
 
 interface TermSheetGuideSectionProps {
@@ -14,44 +25,179 @@ interface TermSheetGuideSectionProps {
   fundingPrograms: string[];
 }
 
+const PRIORITY_ORDER: TermSheetItemPriority[] = [
+  "required",
+  "conditional",
+  "informational",
+];
+
+const PRIORITY_STYLES: Record<TermSheetItemPriority, string> = {
+  required: "bg-red-50 text-red-700 border-red-100",
+  conditional: "bg-amber-50 text-amber-700 border-amber-100",
+  informational: "bg-slate-50 text-slate-600 border-slate-200",
+};
+
+const PRIORITY_LABELS: Record<TermSheetItemPriority, string> = {
+  required: "Required",
+  conditional: "Conditional",
+  informational: "Info",
+};
+
+function sortByPriority(items: TermSheetChecklistItem[]): TermSheetChecklistItem[] {
+  return [...items].sort((a, b) => {
+    const aIdx = PRIORITY_ORDER.indexOf(a.priority ?? "informational");
+    const bIdx = PRIORITY_ORDER.indexOf(b.priority ?? "informational");
+    return aIdx - bIdx;
+  });
+}
+
+function KeyThresholdsTable({ thresholds }: { thresholds: TermSheetKeyThreshold[] }) {
+  const [expandedCitation, setExpandedCitation] = useState<number | null>(null);
+
+  if (thresholds.length === 0) return null;
+
+  return (
+    <div>
+      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+        Key thresholds
+      </p>
+      <div className="rounded-lg border border-brand/20 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-emerald-50/80 text-left">
+              <th className="px-4 py-2.5 text-xs font-semibold text-slate-600 w-2/5">
+                Metric
+              </th>
+              <th className="px-4 py-2.5 text-xs font-semibold text-slate-600">Requirement</th>
+              <th className="px-4 py-2.5 text-xs font-semibold text-slate-600 w-20" />
+            </tr>
+          </thead>
+          <tbody>
+            {thresholds.map((row, idx) => (
+              <Fragment key={`${row.label}-${idx}`}>
+                <tr className="border-t border-slate-100 bg-white">
+                  <td className="px-4 py-3 font-semibold text-slate-800 align-top">
+                    {row.label}
+                  </td>
+                  <td className="px-4 py-3 text-slate-700 align-top">{row.value}</td>
+                  <td className="px-4 py-3 align-top">
+                    {row.citation && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedCitation(expandedCitation === idx ? null : idx)
+                        }
+                        className="text-[11px] text-brand hover:text-brand-hover font-medium whitespace-nowrap"
+                      >
+                        {expandedCitation === idx ? "Hide" : "Source"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+                {row.citation && expandedCitation === idx && (
+                  <tr className="bg-slate-50/50">
+                    <td colSpan={3} className="px-4 py-2 text-xs text-slate-500 border-t border-slate-100">
+                      <FormattedCitationText text={row.citation} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function GuideItemCard({
+  item,
+  showProgramTags,
+}: {
+  item: TermSheetChecklistItem;
+  showProgramTags: boolean;
+}) {
+  const [showCitation, setShowCitation] = useState(false);
+  const priority = item.priority ?? "informational";
+
+  return (
+    <li className="rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <p className="text-sm font-semibold text-slate-800">{item.item}</p>
+          <span
+            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${PRIORITY_STYLES[priority]}`}
+          >
+            {PRIORITY_LABELS[priority]}
+          </span>
+        </div>
+        {showProgramTags && item.programs && item.programs.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {item.programs.map((program) => (
+              <span
+                key={program}
+                className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100"
+              >
+                {program}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">{item.requirement}</p>
+      {item.citation && (
+        <button
+          type="button"
+          onClick={() => setShowCitation((v) => !v)}
+          className="text-[11px] text-brand hover:text-brand-hover font-medium mt-2"
+        >
+          {showCitation ? "Hide source" : "View source"}
+        </button>
+      )}
+      {showCitation && item.citation && (
+        <p className="text-xs text-slate-500 mt-1.5 leading-snug border-l-2 border-brand/30 pl-3">
+          <FormattedCitationText text={item.citation} />
+        </p>
+      )}
+    </li>
+  );
+}
+
 function GuideItemList({
   items,
+  showProgramTags,
+  initialVisible = 4,
 }: {
-  items: TermSheetGuideResult["sections"][number]["items"];
+  items: TermSheetChecklistItem[];
+  showProgramTags: boolean;
+  initialVisible?: number;
 }) {
+  const sorted = sortByPriority(items);
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? sorted : sorted.slice(0, initialVisible);
+  const hiddenCount = sorted.length - initialVisible;
+
   return (
-    <ul className="space-y-3">
-      {items.map((item, idx) => (
-        <li
-          key={`${item.item}-${idx}`}
-          className="rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3"
+    <div>
+      <ul className="space-y-3">
+        {visible.map((item, idx) => (
+          <GuideItemCard
+            key={`${item.item}-${idx}`}
+            item={item}
+            showProgramTags={showProgramTags}
+          />
+        ))}
+      </ul>
+      {!showAll && hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="text-xs text-brand hover:text-brand-hover font-medium mt-3"
         >
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <p className="text-sm font-semibold text-slate-800">{item.item}</p>
-            {item.programs && item.programs.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {item.programs.map((program) => (
-                  <span
-                    key={program}
-                    className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100"
-                  >
-                    {program}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
-            {item.requirement}
-          </p>
-          {item.citation && (
-            <p className="text-xs text-slate-500 mt-2 leading-snug border-l-2 border-brand/30 pl-3">
-              <FormattedCitationText text={item.citation} />
-            </p>
-          )}
-        </li>
-      ))}
-    </ul>
+          Show {hiddenCount} more in this section
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -98,6 +244,7 @@ export function TermSheetGuideSection({
   const [guideBaseline, setGuideBaseline] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isPrefetching, setIsPrefetching] = useState(false);
 
   const currentFingerprint = buildTermSheetGuideFingerprint(
     loanType,
@@ -108,6 +255,46 @@ export function TermSheetGuideSection({
     !!guide && !!guideBaseline && currentFingerprint !== guideBaseline;
 
   const canGenerate = selectedAgencies.length > 0 && fundingPrograms.length > 0;
+  const isCached = canGenerate && !!getCachedTermSheetGuide(
+    loanType,
+    selectedAgencies,
+    fundingPrograms
+  );
+  const showProgramTags = fundingPrograms.length > 1;
+
+  useEffect(() => {
+    if (!canGenerate) {
+      setIsPrefetching(false);
+      return;
+    }
+
+    prefetchTermSheetGuide(loanType, selectedAgencies, fundingPrograms);
+
+    const checkPrefetch = () => {
+      setIsPrefetching(
+        isTermSheetGuidePrefetching(loanType, selectedAgencies, fundingPrograms)
+      );
+    };
+
+    checkPrefetch();
+    const interval = setInterval(checkPrefetch, 400);
+    return () => clearInterval(interval);
+  }, [loanType, selectedAgencies, fundingPrograms, canGenerate]);
+
+  const loadGuide = async () => {
+    const result = await fetchTermSheetGuide(
+      loanType,
+      selectedAgencies,
+      fundingPrograms
+    );
+    setGuide(result);
+    setGuideBaseline(currentFingerprint);
+    setTimeout(() => {
+      document
+        .getElementById("term-sheet-guide-results")
+        ?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+  };
 
   const handleGenerate = async () => {
     if (!canGenerate) {
@@ -121,29 +308,7 @@ export function TermSheetGuideSection({
     setErrorMessage("");
 
     try {
-      const response = await fetch("/api/term-sheet-guide", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          loanType,
-          agencies: selectedAgencies,
-          fundingPrograms,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        setGuide(data.guide);
-        setGuideBaseline(currentFingerprint);
-        setTimeout(() => {
-          document
-            .getElementById("term-sheet-guide-results")
-            ?.scrollIntoView({ behavior: "smooth" });
-        }, 100);
-      } else {
-        setErrorMessage(data.error || "Failed to generate term sheet guide.");
-      }
+      await loadGuide();
     } catch {
       setErrorMessage("Failed to connect to term sheet guide service.");
     } finally {
@@ -165,8 +330,8 @@ export function TermSheetGuideSection({
                 Term Sheet Guide
               </h2>
               <p className="text-sm text-slate-500 mt-1 max-w-xl">
-                Structured checklist from your selected funding programs and agency
-                rulebooks — LTV, DSCR, equity, closing, and program requirements.
+                Key thresholds and checklist from your funding programs and agency
+                rulebooks.
               </p>
             </div>
             <button
@@ -178,7 +343,7 @@ export function TermSheetGuideSection({
               {isGenerating ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating guide...
+                  {isCached ? "Loading guide..." : "Generating guide..."}
                 </>
               ) : (
                 <>
@@ -188,6 +353,17 @@ export function TermSheetGuideSection({
               )}
             </button>
           </div>
+
+          {canGenerate && isCached && !guide && !isGenerating && (
+            <p className="text-xs text-emerald-600 font-medium mt-3">
+              Guide ready — click to load instantly.
+            </p>
+          )}
+          {canGenerate && isPrefetching && !isCached && !guide && (
+            <p className="text-xs text-slate-500 mt-3">
+              Preparing guide in the background…
+            </p>
+          )}
           {!canGenerate && (
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-3">
               Select funding programs and target agencies in the sidebar to generate a
@@ -236,6 +412,8 @@ export function TermSheetGuideSection({
               </p>
             )}
 
+            <KeyThresholdsTable thresholds={guide.keyThresholds ?? []} />
+
             <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
               {totalItems} checklist items across {guide.sections.length} sections
             </p>
@@ -248,7 +426,10 @@ export function TermSheetGuideSection({
                   itemCount={section.items.length}
                   defaultOpen={idx === 0}
                 >
-                  <GuideItemList items={section.items} />
+                  <GuideItemList
+                    items={section.items}
+                    showProgramTags={showProgramTags}
+                  />
                 </CollapsibleGuideSection>
               ))}
             </div>
