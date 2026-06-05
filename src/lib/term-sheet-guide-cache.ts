@@ -8,7 +8,7 @@ export function getTermSheetGuideContextKey(
   agencies: string[],
   fundingPrograms: string[]
 ): string {
-  return `${loanType}:${[...agencies].sort().join(",")}:${[...fundingPrograms].sort().join(",")}`;
+  return `v2:${loanType}:${[...agencies].sort().join(",")}:${[...fundingPrograms].sort().join(",")}`;
 }
 
 export function getCachedTermSheetGuide(

@@ -4,6 +4,10 @@ import { Fragment, useEffect, useState } from "react";
 import { BookOpen, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { buildTermSheetGuideFingerprint } from "@/lib/term-sheet-guide";
 import {
+  countItemsByTier,
+  filterSectionsByTier,
+} from "@/lib/term-sheet-guide-utils";
+import {
   fetchTermSheetGuide,
   getCachedTermSheetGuide,
   isTermSheetGuidePrefetching,
@@ -166,38 +170,22 @@ function GuideItemCard({
 function GuideItemList({
   items,
   showProgramTags,
-  initialVisible = 4,
 }: {
   items: TermSheetChecklistItem[];
   showProgramTags: boolean;
-  initialVisible?: number;
 }) {
   const sorted = sortByPriority(items);
-  const [showAll, setShowAll] = useState(false);
-  const visible = showAll ? sorted : sorted.slice(0, initialVisible);
-  const hiddenCount = sorted.length - initialVisible;
 
   return (
-    <div>
-      <ul className="space-y-3">
-        {visible.map((item, idx) => (
-          <GuideItemCard
-            key={`${item.item}-${idx}`}
-            item={item}
-            showProgramTags={showProgramTags}
-          />
-        ))}
-      </ul>
-      {!showAll && hiddenCount > 0 && (
-        <button
-          type="button"
-          onClick={() => setShowAll(true)}
-          className="text-xs text-brand hover:text-brand-hover font-medium mt-3"
-        >
-          Show {hiddenCount} more in this section
-        </button>
-      )}
-    </div>
+    <ul className="space-y-3">
+      {sorted.map((item, idx) => (
+        <GuideItemCard
+          key={`${item.item}-${idx}`}
+          item={item}
+          showProgramTags={showProgramTags}
+        />
+      ))}
+    </ul>
   );
 }
 
@@ -245,6 +233,7 @@ export function TermSheetGuideSection({
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [isPrefetching, setIsPrefetching] = useState(false);
+  const [showFullChecklist, setShowFullChecklist] = useState(false);
 
   const currentFingerprint = buildTermSheetGuideFingerprint(
     loanType,
@@ -289,6 +278,7 @@ export function TermSheetGuideSection({
     );
     setGuide(result);
     setGuideBaseline(currentFingerprint);
+    setShowFullChecklist(false);
     setTimeout(() => {
       document
         .getElementById("term-sheet-guide-results")
@@ -316,8 +306,11 @@ export function TermSheetGuideSection({
     }
   };
 
-  const totalItems =
-    guide?.sections.reduce((sum, section) => sum + section.items.length, 0) ?? 0;
+  const tierCounts = guide ? countItemsByTier(guide.sections) : null;
+  const visibleSections = guide
+    ? filterSectionsByTier(guide.sections, showFullChecklist ? "all" : "essential")
+    : [];
+  const hasExtendedItems = (tierCounts?.extended ?? 0) > 0;
 
   return (
     <div className="space-y-4">
@@ -413,12 +406,29 @@ export function TermSheetGuideSection({
 
             <KeyThresholdsTable thresholds={guide.keyThresholds ?? []} />
 
-            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-              {totalItems} checklist items across {guide.sections.length} sections
-            </p>
+            {tierCounts && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                  {showFullChecklist
+                    ? `${tierCounts.total} checklist items across ${visibleSections.length} sections`
+                    : `${tierCounts.essential} essential items across ${visibleSections.length} sections`}
+                  {!showFullChecklist && hasExtendedItems && (
+                    <span className="normal-case font-normal text-slate-400">
+                      {" "}
+                      · +{tierCounts.extended} in full checklist
+                    </span>
+                  )}
+                </p>
+                {showFullChecklist && (
+                  <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
+                    Full checklist
+                  </span>
+                )}
+              </div>
+            )}
 
             <div className="space-y-3">
-              {guide.sections.map((section, idx) => (
+              {visibleSections.map((section, idx) => (
                 <CollapsibleGuideSection
                   key={`${section.title}-${idx}`}
                   title={section.title}
@@ -432,6 +442,20 @@ export function TermSheetGuideSection({
                 </CollapsibleGuideSection>
               ))}
             </div>
+
+            {hasExtendedItems && (
+              <div className="pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowFullChecklist((v) => !v)}
+                  className="text-sm text-brand hover:text-brand-hover font-medium"
+                >
+                  {showFullChecklist
+                    ? "Back to summary view"
+                    : `Show full checklist (+${tierCounts?.extended ?? 0} items)`}
+                </button>
+              </div>
+            )}
           </div>
         )}
 

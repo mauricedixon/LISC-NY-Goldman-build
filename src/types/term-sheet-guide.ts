@@ -1,5 +1,7 @@
 export type TermSheetItemPriority = "required" | "conditional" | "informational";
 
+export type TermSheetItemTier = "essential" | "extended";
+
 export interface TermSheetKeyThreshold {
   label: string;
   value: string;
@@ -12,6 +14,7 @@ export interface TermSheetChecklistItem {
   citation?: string;
   programs?: string[];
   priority?: TermSheetItemPriority;
+  tier?: TermSheetItemTier;
 }
 
 export interface TermSheetGuideSection {

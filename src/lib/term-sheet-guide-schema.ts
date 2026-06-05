@@ -10,36 +10,47 @@ export const TERM_SHEET_GUIDE_JSON_SCHEMA = `{
   ],
   "sections": [
     {
-      "title": "Section name (e.g. Loan Terms, Equity, Closing, Program Requirements)",
+      "title": "Section name (e.g. Loan Terms, Equity, Closing, Program Requirements, Environmental Review)",
       "items": [
         {
           "item": "Short label",
           "requirement": "One concise sentence with the requirement",
           "citation": "Exact citation including [Source: Agency - Title, Page N]",
           "programs": ["Optional — only when program-specific"],
-          "priority": "required" | "conditional" | "informational"
+          "priority": "required" | "conditional" | "informational",
+          "tier": "essential" | "extended"
         }
       ]
     }
   ]
 }`;
 
-export const TERM_SHEET_GUIDE_FIELD_GUIDANCE = `Build a concise, scannable term sheet guide grounded ONLY in the rulebook excerpts.
+export const TERM_SHEET_GUIDE_FIELD_GUIDANCE = `Build a two-tier term sheet guide grounded ONLY in the rulebook excerpts.
 
 Structure:
-1. keyThresholds — 4-8 numeric or concrete thresholds underwriters need at a glance (LTV, DSCR, equity, rates, reserves, etc.). Omit if not in excerpts.
-2. sections — at most 4 sections, 2-4 items each (hard cap ~14 checklist items total).
+1. keyThresholds — 4-8 numeric or concrete thresholds (LTV, DSCR, equity, fees, set-asides, rates, reserves). Do not repeat these verbatim in section items.
+2. sections — up to 6 sections. Each item MUST include tier: "essential" or "extended".
 
-Section order when supported: Loan Terms → Equity / Capital Stack → Closing → Program Requirements.
+ESSENTIAL tier (default view — max 12 items total across all sections):
+- Loan terms, equity minimums, core closing conditions, top program eligibility rules
+- Items with priority "required" that belong on every term sheet
+- Only the highest-signal rules an underwriter needs at a glance
+
+EXTENDED tier (full checklist — additional 10-18 items):
+- Environmental review, design/construction/sustainability, regulatory agreement detail
+- Pre-closing reviews and approvals, monitoring, informational procedures
+- Items with priority "conditional" or "informational" unless critically required
+
+Section order when supported:
+Loan Terms → Equity / Capital Stack → Closing → Program Requirements → Environmental Review → Design / Construction / Sustainability
 
 Priority rules:
-- "required" — must appear on term sheet / mandatory program rule
-- "conditional" — applies in certain deal structures
-- "informational" — helpful context, not a hard threshold
+- "required" — mandatory; usually tier "essential"
+- "conditional" — tier "extended" unless deal-critical
+- "informational" — tier "extended"
 
 Rules:
-- Every item must include a citation when possible.
-- Keep requirement text to one sentence.
-- Tag programs only when the item is program-specific.
-- Do not invent thresholds — omit if not in excerpts.
-- Prioritize selected funding programs and loan type.`;
+- Hard cap: ≤12 essential items, ≤18 extended items (30 total max).
+- Every item must include tier and a citation when possible.
+- Do not duplicate keyThresholds content in section items.
+- Do not invent thresholds — omit if not in excerpts.`;

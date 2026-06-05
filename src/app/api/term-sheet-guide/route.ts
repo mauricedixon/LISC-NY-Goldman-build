@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { formatFundingPrograms } from "@/types/deal";
 import { retrieveRulebookContext } from "@/utils/rag";
 import { parseClaudeJson } from "@/utils/parse-claude-json";
+import { normalizeGuideSections } from "@/lib/term-sheet-guide-utils";
 import type { TermSheetGuideResult } from "@/types/term-sheet-guide";
 import {
   TERM_SHEET_GUIDE_FIELD_GUIDANCE,
@@ -23,7 +24,8 @@ function buildGuideQuery(
     `Funding programs in capital stack: ${formatFundingPrograms(fundingPrograms)}.`,
     `Target agencies / rulebooks: ${agencies.join(", ")}.`,
     "LTV limits, DSCR minimums, equity requirements, loan terms, closing conditions,",
-    "reserve requirements, program-specific eligibility, subordination, rate and amortization.",
+    "reserve requirements, program-specific eligibility, environmental review, design and sustainability,",
+    "regulatory agreement, pre-closing approvals, subordination, rate and amortization.",
   ].join(" ");
 }
 
@@ -81,7 +83,7 @@ ${TERM_SHEET_GUIDE_FIELD_GUIDANCE}
     const claudeStartedAt = Date.now();
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 3500,
+      max_tokens: 5000,
       temperature: 0,
       system:
         "You are a precise underwriting assistant. You only output valid JSON grounded in provided rulebooks.",
@@ -106,7 +108,7 @@ ${TERM_SHEET_GUIDE_FIELD_GUIDANCE}
       guide = {
         summary: parsed.summary ?? "",
         keyThresholds: parsed.keyThresholds ?? [],
-        sections: parsed.sections ?? [],
+        sections: normalizeGuideSections(parsed.sections ?? []),
       };
     } catch {
       console.error("JSON parse error — raw response:", responseText.slice(0, 500));
