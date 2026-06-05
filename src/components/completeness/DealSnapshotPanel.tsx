@@ -82,8 +82,7 @@ export function DealSnapshotPanel({
         </div>
         {isStale && (
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-3">
-            Deal inputs changed since this analysis. Re-run the completeness check to refresh
-            this snapshot.
+            Deal inputs changed since this analysis. Re-run the check to refresh this snapshot.
           </p>
         )}
       </div>

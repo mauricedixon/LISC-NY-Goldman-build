@@ -68,8 +68,8 @@ async function main() {
   const fields = new Set((data.questions ?? []).map((q) => q.field));
   const expected = [
     "projectName", "developerName", "loanType", "borough",
-    "totalUnits", "affordableUnits", "targetAMI",
-    "totalDevelopmentCost", "requestedLoanAmount", "ltv", "dscr",
+    "totalUnits",
+    "totalDevelopmentCost", "requestedLoanAmount",
   ];
   const missing = expected.filter((f) => !fields.has(f));
 

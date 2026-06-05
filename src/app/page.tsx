@@ -27,12 +27,24 @@ export default function Home() {
   const [formData, setFormData] = useState({ ...EMPTY_DEAL_FORM });
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [analysisBaseline, setAnalysisBaseline] = useState<string | null>(null);
-  const [checkMode, setCheckMode] = useState<"manual" | "guided">("manual");
+  const [checkMode, setCheckMode] = useState<"manual" | "guided">("guided");
 
   const toggleAgency = (id: string) => {
     setAgencies((prev) =>
       prev.map((a) => (a.id === id ? { ...a, checked: !a.checked } : a))
     );
+  };
+
+  const toggleFundingProgram = (program: string) => {
+    setFormData((prev) => {
+      const selected = prev.fundingPrograms.includes(program);
+      return {
+        ...prev,
+        fundingPrograms: selected
+          ? prev.fundingPrograms.filter((p) => p !== program)
+          : [...prev.fundingPrograms, program],
+      };
+    });
   };
 
   const selectedAgencies = agencies.filter((a) => a.checked).map((a) => a.id);
@@ -77,7 +89,11 @@ export default function Home() {
   };
 
   const handleWizardReset = () => {
-    setFormData({ ...EMPTY_DEAL_FORM, loanType });
+    setFormData((prev) => ({
+      ...EMPTY_DEAL_FORM,
+      loanType,
+      fundingPrograms: prev.fundingPrograms,
+    }));
   };
 
   const modeLabel =
@@ -90,6 +106,8 @@ export default function Home() {
         onToggleAgency={toggleAgency}
         loanType={loanType}
         onLoanTypeChange={setLoanType}
+        fundingPrograms={formData.fundingPrograms}
+        onToggleFundingProgram={toggleFundingProgram}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         <header className="bg-white border-b border-border-subtle px-8 pt-6 pb-4 shadow-sm shrink-0">
@@ -108,22 +126,27 @@ export default function Home() {
               loanType={loanType}
               selectedAgencyIds={selectedAgencies}
               selectedAgencyNames={selectedAgencyNames}
+              fundingPrograms={formData.fundingPrograms}
               modeLabel={modeLabel}
             />
 
+            <div className="bg-white rounded-xl border border-border-subtle p-4 text-sm text-slate-600 space-y-2 shadow-sm">
+              <p>
+                <span className="font-semibold text-slate-800">Guided Review</span> — quick
+                conversational deal context (term sheet lookup → Policy Chat; Term Sheet Guide
+                coming soon)
+              </p>
+              <p>
+                <span className="font-semibold text-slate-800">Manual Review</span> — enter deal
+                details in a form
+              </p>
+              <p>
+                <span className="font-semibold text-slate-800">Policy Chat</span> — bottom-right
+                widget for ad-hoc rulebook questions
+              </p>
+            </div>
+
             <div className="flex items-center gap-1 bg-white rounded-xl border border-border-subtle p-1 w-fit shadow-sm">
-              <button
-                type="button"
-                onClick={() => setCheckMode("manual")}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                  checkMode === "manual"
-                    ? "bg-[#0d6e52] text-white shadow-sm"
-                    : "text-slate-700 hover:text-slate-900 hover:bg-slate-100"
-                }`}
-              >
-                <ListChecks className="w-4 h-4" />
-                Manual Review
-              </button>
               <button
                 type="button"
                 onClick={() => setCheckMode("guided")}
@@ -136,6 +159,32 @@ export default function Home() {
                 <Sparkles className="w-4 h-4" />
                 Guided Review
               </button>
+              <button
+                type="button"
+                onClick={() => setCheckMode("manual")}
+                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                  checkMode === "manual"
+                    ? "bg-[#0d6e52] text-white shadow-sm"
+                    : "text-slate-700 hover:text-slate-900 hover:bg-slate-100"
+                }`}
+              >
+                <ListChecks className="w-4 h-4" />
+                Manual Review
+              </button>
+            </div>
+
+            <div className={checkMode === "guided" ? "" : "hidden"}>
+              <GuidedReviewWizard
+                selectedAgencies={selectedAgencies}
+                loanType={loanType}
+                fundingPrograms={formData.fundingPrograms}
+                setAnalysisResult={setAnalysisResult}
+                onAnalysisComplete={recordAnalysisBaseline}
+                onAnalysisCleared={clearAnalysisBaseline}
+                onDealSync={handleDealFieldSync}
+                onWizardAnswersSync={handleWizardAnswersSync}
+                onWizardReset={handleWizardReset}
+              />
             </div>
 
             <div className={checkMode === "manual" ? "" : "hidden"}>
@@ -150,19 +199,6 @@ export default function Home() {
               />
             </div>
 
-            <div className={checkMode === "guided" ? "" : "hidden"}>
-              <GuidedReviewWizard
-                selectedAgencies={selectedAgencies}
-                loanType={loanType}
-                setAnalysisResult={setAnalysisResult}
-                onAnalysisComplete={recordAnalysisBaseline}
-                onAnalysisCleared={clearAnalysisBaseline}
-                onDealSync={handleDealFieldSync}
-                onWizardAnswersSync={handleWizardAnswersSync}
-                onWizardReset={handleWizardReset}
-              />
-            </div>
-
             <div id="completeness-results">
               <AnalysisResults
                 analysisResult={analysisResult}
@@ -170,7 +206,7 @@ export default function Home() {
                 loanType={loanType}
                 selectedAgencyNames={selectedAgencyNames}
                 isStale={isAnalysisStale}
-                emptyMessage="Run a completeness check in Manual Review or Guided Review to see results."
+                emptyMessage="Check a deal in Guided or Manual Review to see results."
               />
             </div>
           </div>
@@ -214,7 +250,11 @@ function ManualReviewForm({
   };
 
   const handleReset = () => {
-    setFormData({ ...EMPTY_DEAL_FORM, loanType });
+    setFormData((prev) => ({
+      ...EMPTY_DEAL_FORM,
+      loanType,
+      fundingPrograms: prev.fundingPrograms,
+    }));
     setAnalysisResult(null);
     setErrorMessage("");
     onAnalysisCleared();
@@ -275,7 +315,7 @@ function ManualReviewForm({
             Deal Data Entry
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            Enter all deal details at once. No documents are uploaded.
+            Enter deal details at once. Funding programs are set in the sidebar.
           </p>
         </div>
         <button
@@ -339,21 +379,6 @@ function ManualReviewForm({
               placeholder="e.g. 80"
               type="number"
             />
-            <Field
-              label="Affordable Units"
-              name="affordableUnits"
-              value={formData.affordableUnits}
-              onChange={handleChange}
-              placeholder="e.g. 80"
-              type="number"
-            />
-            <Field
-              label="AMI Targets"
-              name="targetAMI"
-              value={formData.targetAMI}
-              onChange={handleChange}
-              placeholder="e.g. 30%, 60%, 80%"
-            />
           </div>
         </div>
 
@@ -376,22 +401,6 @@ function ManualReviewForm({
               onChange={handleChange}
               placeholder="e.g. $6,000,000"
             />
-            <Field
-              label="Loan-to-Value (LTV %)"
-              name="ltv"
-              value={formData.ltv}
-              onChange={handleChange}
-              placeholder="e.g. 75"
-              type="number"
-            />
-            <Field
-              label="Debt Service Coverage Ratio (DSCR)"
-              name="dscr"
-              value={formData.dscr}
-              onChange={handleChange}
-              placeholder="e.g. 1.20"
-              type="number"
-            />
           </div>
         </div>
 
@@ -400,13 +409,6 @@ function ManualReviewForm({
             Additional
           </p>
           <div className="grid grid-cols-1 gap-4">
-            <Field
-              label="Other Funding Sources"
-              name="otherFundingSources"
-              value={formData.otherFundingSources}
-              onChange={handleChange}
-              placeholder="e.g. HPD loan, LIHTC equity, HCR subordinate"
-            />
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1.5">
                 Additional Notes
@@ -438,7 +440,7 @@ function ManualReviewForm({
           ) : (
             <>
               <ChevronRight className="w-4 h-4" />
-              Run Completeness Check
+              Check deal against rulebooks
             </>
           )}
         </button>

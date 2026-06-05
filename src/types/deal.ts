@@ -1,16 +1,24 @@
+export const FUNDING_PROGRAMS = [
+  "LIHTC",
+  "HPD",
+  "HCR",
+  "ESD",
+  "HUD",
+  "Fannie/Freddie",
+  "Other",
+] as const;
+
+export type FundingProgram = (typeof FUNDING_PROGRAMS)[number];
+
 export interface DealFormData {
   projectName: string;
   developerName: string;
   loanType: string;
   borough: string;
   totalUnits: string;
-  affordableUnits: string;
-  targetAMI: string;
   totalDevelopmentCost: string;
   requestedLoanAmount: string;
-  ltv: string;
-  dscr: string;
-  otherFundingSources: string;
+  fundingPrograms: string[];
   additionalNotes: string;
 }
 
@@ -20,15 +28,15 @@ export const EMPTY_DEAL_FORM: DealFormData = {
   loanType: "",
   borough: "",
   totalUnits: "",
-  affordableUnits: "",
-  targetAMI: "",
   totalDevelopmentCost: "",
   requestedLoanAmount: "",
-  ltv: "",
-  dscr: "",
-  otherFundingSources: "",
+  fundingPrograms: [],
   additionalNotes: "",
 };
+
+export function formatFundingPrograms(programs: string[]): string {
+  return programs.length > 0 ? programs.join(", ") : "[Not provided]";
+}
 
 export function buildDealSummary(formData: DealFormData): string {
   const lines = [
@@ -41,17 +49,13 @@ export function buildDealSummary(formData: DealFormData): string {
     "",
     "UNIT MIX",
     `Total Units: ${formData.totalUnits || "[Not provided]"}`,
-    `Affordable Units: ${formData.affordableUnits || "[Not provided]"}`,
-    `AMI Targets: ${formData.targetAMI || "[Not provided]"}`,
     "",
     "FINANCIALS",
     `Total Development Cost: ${formData.totalDevelopmentCost || "[Not provided]"}`,
     `Requested Loan Amount: ${formData.requestedLoanAmount || "[Not provided]"}`,
-    `Loan-to-Value (LTV): ${formData.ltv ? formData.ltv + "%" : "[Not provided]"}`,
-    `Debt Service Coverage Ratio (DSCR): ${formData.dscr || "[Not provided]"}`,
     "",
-    "OTHER SOURCES",
-    `Other Funding Sources: ${formData.otherFundingSources || "[Not provided]"}`,
+    "FUNDING PROGRAMS",
+    `Programs: ${formatFundingPrograms(formData.fundingPrograms)}`,
     "",
     "ADDITIONAL NOTES",
     formData.additionalNotes || "[None]",

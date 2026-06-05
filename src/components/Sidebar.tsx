@@ -2,6 +2,7 @@
 
 import { Building2, ChevronDown, CheckSquare } from "lucide-react";
 import { getAgencyStyle } from "@/lib/agencies";
+import { FUNDING_PROGRAMS } from "@/types/deal";
 
 export interface Agency {
   id: string;
@@ -24,11 +25,21 @@ interface SidebarProps {
   onToggleAgency: (id: string) => void;
   loanType: LoanType;
   onLoanTypeChange: (value: LoanType) => void;
+  fundingPrograms: string[];
+  onToggleFundingProgram: (program: string) => void;
 }
 
-export function Sidebar({ agencies, onToggleAgency, loanType, onLoanTypeChange }: SidebarProps) {
+export function Sidebar({
+  agencies,
+  onToggleAgency,
+  loanType,
+  onLoanTypeChange,
+  fundingPrograms,
+  onToggleFundingProgram,
+}: SidebarProps) {
   const selected = agencies.filter((a) => a.checked);
   const selectedCount = selected.length;
+  const fundingCount = fundingPrograms.length;
 
   return (
     <div className="w-72 bg-[#152420] text-slate-100 flex flex-col h-screen border-r border-[#1e332c]">
@@ -71,6 +82,18 @@ export function Sidebar({ agencies, onToggleAgency, loanType, onLoanTypeChange }
               <span className="text-[11px] text-amber-400/80">Select an agency</span>
             )}
           </div>
+          {fundingCount > 0 && (
+            <div className="flex flex-wrap gap-1 pt-1 border-t border-[#243d35]">
+              {fundingPrograms.map((program) => (
+                <span
+                  key={program}
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-900/40 text-emerald-300 border border-emerald-800/50"
+                >
+                  {program}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -102,7 +125,7 @@ export function Sidebar({ agencies, onToggleAgency, loanType, onLoanTypeChange }
               {selectedCount} selected
             </span>
           </div>
-          <p className="text-xs text-slate-500">Select rulebooks to constrain AI search.</p>
+          <p className="text-xs text-slate-500">Rulebooks to constrain AI search.</p>
 
           <div className="space-y-1">
             {agencies.map((agency) => {
@@ -136,6 +159,57 @@ export function Sidebar({ agencies, onToggleAgency, loanType, onLoanTypeChange }
                     }`}
                   >
                     {agency.name}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-3 px-1">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Funding Programs
+            </h2>
+            <span className="text-[10px] bg-emerald-900/30 text-emerald-300 px-2 py-0.5 rounded-full font-semibold">
+              {fundingCount} selected
+            </span>
+          </div>
+          <p className="text-xs text-slate-500">
+            Capital stack / programs in this deal — not the same as target agencies above.
+          </p>
+
+          <div className="space-y-1">
+            {FUNDING_PROGRAMS.map((program) => {
+              const checked = fundingPrograms.includes(program);
+              return (
+                <label
+                  key={program}
+                  className={`flex items-center gap-3 group cursor-pointer px-2 py-2 rounded-lg transition-colors ${
+                    checked ? "bg-[#1a2e28]" : "hover:bg-[#1a2e28]/60"
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                      checked
+                        ? "bg-brand border-brand"
+                        : "border-slate-600 group-hover:border-slate-500"
+                    }`}
+                  >
+                    {checked && <CheckSquare className="w-3 h-3 text-white" />}
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="hidden"
+                    checked={checked}
+                    onChange={() => onToggleFundingProgram(program)}
+                  />
+                  <span
+                    className={`text-sm ${
+                      checked ? "text-slate-100" : "text-slate-400 group-hover:text-slate-300"
+                    }`}
+                  >
+                    {program}
                   </span>
                 </label>
               );

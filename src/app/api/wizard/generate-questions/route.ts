@@ -15,13 +15,8 @@ const STANDARD_FIELDS = [
   "loanType",
   "borough",
   "totalUnits",
-  "affordableUnits",
-  "targetAMI",
   "totalDevelopmentCost",
   "requestedLoanAmount",
-  "ltv",
-  "dscr",
-  "otherFundingSources",
   "additionalNotes",
 ] as const;
 
@@ -29,8 +24,8 @@ function buildQuestionQuery(loanType: string, agencies: string[]): string {
   return [
     `Affordable housing underwriting interview for ${loanType} loan.`,
     `Target agencies: ${agencies.join(", ")}.`,
-    "Required submission fields, eligibility requirements, AMI limits, LTV caps,",
-    "DSCR minimums, unit mix requirements, funding stack, compliance documentation.",
+    "Required submission fields, eligibility requirements, unit count,",
+    "development cost, loan amount, compliance documentation.",
   ].join(" ");
 }
 

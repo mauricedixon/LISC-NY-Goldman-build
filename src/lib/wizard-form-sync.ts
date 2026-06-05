@@ -3,6 +3,9 @@ import type { WizardAnswer, WizardQuestion } from "@/types/wizard";
 
 export type DealFieldKey = keyof DealFormData;
 
+/** String-valued deal fields that the wizard can populate. */
+export type DealStringFieldKey = Exclude<DealFieldKey, "fundingPrograms">;
+
 /** Returns only fields with captured wizard answers (for merging into existing form state). */
 export function applyWizardAnswersToFormData(
   questions: WizardQuestion[],
@@ -15,7 +18,7 @@ export function applyWizardAnswersToFormData(
   for (const q of questions) {
     const answer = answerMap.get(q.id);
     if (!answer || answer.skipped || !answer.value.trim()) continue;
-    const key = q.field as DealFieldKey;
+    const key = q.field as DealStringFieldKey;
     patch[key] = answer.value.trim();
   }
 

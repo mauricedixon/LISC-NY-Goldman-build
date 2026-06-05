@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { retrieveRulebookContext } from "@/utils/rag";
 import { parseClaudeJson } from "@/utils/parse-claude-json";
+import type { DealStringFieldKey } from "@/lib/wizard-form-sync";
 import { buildDealSummary, type DealFormData } from "@/types/deal";
 import type { WizardAnswer, WizardQuestion, AnalysisResult } from "@/types/wizard";
 import { ANALYSIS_JSON_SCHEMA, ANALYSIS_FIELD_GUIDANCE } from "@/lib/analysis-prompt-schema";
@@ -46,13 +47,9 @@ function answersToFormData(
     loanType,
     borough: "",
     totalUnits: "",
-    affordableUnits: "",
-    targetAMI: "",
     totalDevelopmentCost: "",
     requestedLoanAmount: "",
-    ltv: "",
-    dscr: "",
-    otherFundingSources: "",
+    fundingPrograms: [],
     additionalNotes: "",
   };
 
@@ -62,10 +59,8 @@ function answersToFormData(
     const answer = answerMap.get(q.id);
     if (!answer || answer.skipped || !answer.value.trim()) continue;
 
-    const key = q.field as keyof DealFormData;
-    if (key in formData) {
-      formData[key] = answer.value.trim();
-    }
+    const key = q.field as DealStringFieldKey;
+    formData[key] = answer.value.trim();
   }
 
   return formData;
@@ -73,11 +68,12 @@ function answersToFormData(
 
 export async function POST(request: NextRequest) {
   try {
-    const { loanType, agencies, questions, answers } = await request.json() as {
+    const { loanType, agencies, questions, answers, fundingPrograms } = await request.json() as {
       loanType: string;
       agencies: string[];
       questions: WizardQuestion[];
       answers: WizardAnswer[];
+      fundingPrograms?: string[];
     };
 
     if (!loanType || !agencies?.length) {
@@ -92,6 +88,9 @@ export async function POST(request: NextRequest) {
     }
 
     const formData = answersToFormData(loanType, questions, answers ?? []);
+    if (fundingPrograms?.length) {
+      formData.fundingPrograms = fundingPrograms;
+    }
     const dealSummary = buildDealSummary(formData);
     const interviewSummary = buildInterviewSummary(loanType, questions, answers ?? []);
 
