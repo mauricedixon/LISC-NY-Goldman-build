@@ -8,7 +8,7 @@ import {
   SkipForward,
   Sparkles,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatFundingPrograms } from "@/types/deal";
 import { applyWizardAnswersToFormData, type DealFieldKey } from "@/lib/wizard-form-sync";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
@@ -27,6 +27,9 @@ import {
 import {
   applyFollowUpAnswer,
   buildAcknowledgment,
+  buildCategoryTransition,
+  buildFollowUpAcknowledgment,
+  buildOpeningMessage,
   getAnswerByField,
   getFollowUpQuestion,
   plainAcknowledgment,
@@ -96,6 +99,10 @@ export function GuidedReviewWizard({
   );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const conversationContext = useMemo(
+    () => ({ fundingPrograms, loanType }),
+    [fundingPrograms, loanType]
+  );
   const contextKey = getWizardContextKey(loanType, selectedAgencies, fundingPrograms);
   const accent = getAccentStyle(selectedAgencies);
   const mainQuestion = questions[currentIndex];
@@ -207,9 +214,11 @@ export function GuidedReviewWizard({
     setAnswers(initialAnswers);
     setCurrentIndex(0);
     setInputValue(firstQuestion?.field === "loanType" ? loanType : "");
+    const opening = plainAcknowledgment(buildOpeningMessage(conversationContext));
     setMessages(
       firstQuestion
         ? [
+            { role: "assistant", content: opening },
             {
               role: "assistant",
               content: firstQuestion.question,
@@ -218,7 +227,9 @@ export function GuidedReviewWizard({
               category: firstQuestion.category,
             },
           ]
-        : []
+        : opening
+          ? [{ role: "assistant", content: opening }]
+          : []
     );
     setHasStarted(true);
     syncField("loanType", loanType);
@@ -291,6 +302,7 @@ export function GuidedReviewWizard({
       return;
     }
 
+    const prevCategory = questions[currentIndex]?.category;
     const nextIndex = currentIndex + 1;
     const nextQuestion = questions[nextIndex];
     setCurrentIndex(nextIndex);
@@ -303,14 +315,27 @@ export function GuidedReviewWizard({
       setInputValue("");
     }
 
-    appendAssistantMessages([
-      {
-        content: nextQuestion.question,
-        questionId: nextQuestion.id,
-        helpText: nextQuestion.helpText,
-        category: nextQuestion.category,
-      },
-    ]);
+    const batch: Array<{
+      content: string;
+      questionId?: string;
+      helpText?: string;
+      category?: string;
+      isAcknowledgment?: boolean;
+    }> = [];
+
+    const transition = buildCategoryTransition(prevCategory, nextQuestion.category);
+    if (transition) {
+      batch.push({ content: transition, isAcknowledgment: true });
+    }
+
+    batch.push({
+      content: nextQuestion.question,
+      questionId: nextQuestion.id,
+      helpText: nextQuestion.helpText,
+      category: nextQuestion.category,
+    });
+
+    appendAssistantMessages(batch);
   };
 
   const proceedAfterMainAnswer = (
@@ -322,7 +347,8 @@ export function GuidedReviewWizard({
       triggerQuestion,
       answerValue,
       updatedAnswers,
-      questions
+      questions,
+      conversationContext
     );
 
     appendAssistantMessages([{ content: ack, isAcknowledgment: true }]);
@@ -332,7 +358,8 @@ export function GuidedReviewWizard({
       answerValue,
       updatedAnswers,
       questions,
-      completedFollowUpKeys
+      completedFollowUpKeys,
+      conversationContext
     );
 
     if (followUp) {
@@ -391,7 +418,9 @@ export function GuidedReviewWizard({
       setCompletedFollowUpKeys((prev) => new Set(prev).add(activeFollowUp.followUpKey));
       setActiveFollowUp(null);
 
-      appendAssistantMessages([{ content: "Thanks — noted.", isAcknowledgment: true }]);
+      appendAssistantMessages([
+        { content: buildFollowUpAcknowledgment(trimmed), isAcknowledgment: true },
+      ]);
       advanceToNextMainQuestion(updatedAnswers);
       return;
     }
