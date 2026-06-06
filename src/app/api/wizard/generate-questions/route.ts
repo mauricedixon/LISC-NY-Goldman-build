@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildFallbackQuestions } from "@/lib/wizard-fallback";
+import { formatFundingPrograms } from "@/types/deal";
 import { retrieveRulebookContext } from "@/utils/rag";
 import { parseClaudeJson } from "@/utils/parse-claude-json";
 import type { WizardQuestion } from "@/types/wizard";
@@ -20,9 +21,14 @@ const STANDARD_FIELDS = [
   "additionalNotes",
 ] as const;
 
-function buildQuestionQuery(loanType: string, agencies: string[]): string {
+function buildQuestionQuery(
+  loanType: string,
+  agencies: string[],
+  fundingPrograms: string[]
+): string {
   return [
     `Affordable housing underwriting interview for ${loanType} loan.`,
+    `Funding programs in capital stack: ${formatFundingPrograms(fundingPrograms)}.`,
     `Target agencies: ${agencies.join(", ")}.`,
     "Required submission fields, eligibility requirements, unit count,",
     "development cost, loan amount, compliance documentation.",
@@ -59,10 +65,12 @@ function normalizeQuestions(questions: WizardQuestion[], loanType: string): Wiza
 
 export async function POST(request: NextRequest) {
   try {
-    const { loanType, agencies } = await request.json() as {
+    const { loanType, agencies, fundingPrograms } = await request.json() as {
       loanType: string;
       agencies: string[];
+      fundingPrograms?: string[];
     };
+    const programs = fundingPrograms ?? [];
 
     if (!loanType) {
       return NextResponse.json({ error: "loanType is required" }, { status: 400 });
@@ -75,7 +83,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const queryText = buildQuestionQuery(loanType, agencies);
+    const queryText = buildQuestionQuery(loanType, agencies, programs);
     const { chunks, contextText } = await retrieveRulebookContext(queryText, agencies, 12);
 
     if (chunks.length === 0) {
@@ -88,11 +96,13 @@ export async function POST(request: NextRequest) {
 
     const prompt = `
 You are an expert affordable housing underwriter assistant for LISC NY.
-Generate a guided interview question list for an underwriter reviewing a ${loanType} deal
-targeting these agencies: ${agencies.join(", ")}.
+Generate a guided interview question list for an underwriter reviewing a ${loanType} deal.
+
+Funding programs in the capital stack: ${formatFundingPrograms(programs)}
+Target agency rulebooks: ${agencies.join(", ")}
 
 Use the rulebook excerpts below as the source of truth. Prioritize questions that uncover
-information required by these agencies and common compliance gaps for this loan type.
+information required by these funding programs and agencies for this loan type.
 
 <rulebooks>
 ${contextText}

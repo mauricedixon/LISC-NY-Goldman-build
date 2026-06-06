@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { formatFundingPrograms } from "@/types/deal";
 import { applyWizardAnswersToFormData, type DealFieldKey } from "@/lib/wizard-form-sync";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
 import { getAccentStyle, getCategoryStyle } from "@/lib/agencies";
@@ -95,7 +96,7 @@ export function GuidedReviewWizard({
   );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const contextKey = getWizardContextKey(loanType, selectedAgencies);
+  const contextKey = getWizardContextKey(loanType, selectedAgencies, fundingPrograms);
   const accent = getAccentStyle(selectedAgencies);
   const mainQuestion = questions[currentIndex];
   const currentQuestion = activeFollowUp ?? mainQuestion;
@@ -133,14 +134,18 @@ export function GuidedReviewWizard({
   }, [messages, isSynthesizing, isEnriching]);
 
   useEffect(() => {
-    prefetchWizardQuestions(loanType, selectedAgencies);
-  }, [contextKey, loanType, selectedAgencies]);
+    prefetchWizardQuestions(loanType, selectedAgencies, fundingPrograms);
+  }, [contextKey, loanType, selectedAgencies, fundingPrograms]);
 
   const loadEnrichedQuestionsInBackground = useCallback(
     async (initialQuestions: WizardQuestion[], initialAnswers: WizardAnswer[]) => {
       setIsEnriching(true);
       try {
-        const enriched = await fetchEnrichedQuestions(loanType, selectedAgencies);
+        const enriched = await fetchEnrichedQuestions(
+          loanType,
+          selectedAgencies,
+          fundingPrograms
+        );
         const questionsChanged = enriched.some(
           (q, i) =>
             q.field !== initialQuestions[i]?.field || q.question !== initialQuestions[i]?.question
@@ -173,7 +178,7 @@ export function GuidedReviewWizard({
         setIsEnriching(false);
       }
     },
-    [loanType, selectedAgencies]
+    [loanType, selectedAgencies, fundingPrograms]
   );
 
   const startReview = () => {
@@ -189,7 +194,11 @@ export function GuidedReviewWizard({
     setActiveFollowUp(null);
     setCompletedFollowUpKeys(new Set());
 
-    const cached = getCachedWizardQuestions(loanType, selectedAgencies);
+    const cached = getCachedWizardQuestions(
+      loanType,
+      selectedAgencies,
+      fundingPrograms
+    );
     const initialQuestions = cached ?? buildFallbackQuestions(loanType);
     const initialAnswers = prefillLoanTypeAnswer(initialQuestions, loanType);
     const firstQuestion = initialQuestions[0];
@@ -490,7 +499,11 @@ export function GuidedReviewWizard({
   };
 
   if (!hasStarted) {
-    const prefetched = getCachedWizardQuestions(loanType, selectedAgencies);
+    const prefetched = getCachedWizardQuestions(
+      loanType,
+      selectedAgencies,
+      fundingPrograms
+    );
 
     return (
       <div className="relative bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
@@ -500,14 +513,20 @@ export function GuidedReviewWizard({
               <Sparkles className="w-8 h-8 text-brand" />
             </div>
             <h3 className="font-semibold text-slate-800 text-xl mb-2">Guided Review</h3>
-            <p className="text-sm text-slate-500 max-w-md mx-auto mb-6 leading-relaxed">
+            <p className="text-sm text-slate-500 max-w-md mx-auto mb-4 leading-relaxed">
               Quick conversational deal context — not a term sheet lookup. Use the Term Sheet
               Guide above for program checklists, or Policy Chat (bottom-right) for ad-hoc
               rulebook questions.
             </p>
+            {fundingPrograms.length > 0 && (
+              <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 max-w-md mx-auto mb-4">
+                Capital stack:{" "}
+                <span className="font-medium">{formatFundingPrograms(fundingPrograms)}</span>
+              </p>
+            )}
             {prefetched && selectedAgencies.length > 0 && (
               <p className="text-xs text-emerald-600 font-medium mb-4">
-                Agency-specific questions are ready — start immediately.
+                Program-tailored questions are ready — start immediately.
               </p>
             )}
             <button

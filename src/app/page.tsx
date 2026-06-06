@@ -10,6 +10,7 @@ import { GuidedReviewWizard } from "@/components/completeness/GuidedReviewWizard
 import { TermSheetGuideSection } from "@/components/completeness/TermSheetGuideSection";
 import { buildAnalysisInputFingerprint } from "@/lib/compliance-snapshot";
 import { applyWizardAnswersToFormData, type DealFieldKey } from "@/lib/wizard-form-sync";
+import { getAgencyIdsForProgram } from "@/lib/funding-program-map";
 import { EMPTY_DEAL_FORM } from "@/types/deal";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
 
@@ -29,23 +30,40 @@ export default function Home() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [analysisBaseline, setAnalysisBaseline] = useState<string | null>(null);
   const [checkMode, setCheckMode] = useState<"manual" | "guided">("guided");
+  const [rulebookSuggestHint, setRulebookSuggestHint] = useState<string | null>(null);
 
   const toggleAgency = (id: string) => {
+    setRulebookSuggestHint(null);
     setAgencies((prev) =>
       prev.map((a) => (a.id === id ? { ...a, checked: !a.checked } : a))
     );
   };
 
   const toggleFundingProgram = (program: string) => {
-    setFormData((prev) => {
-      const selected = prev.fundingPrograms.includes(program);
-      return {
-        ...prev,
-        fundingPrograms: selected
-          ? prev.fundingPrograms.filter((p) => p !== program)
-          : [...prev.fundingPrograms, program],
-      };
-    });
+    const isRemoving = formData.fundingPrograms.includes(program);
+    const nextPrograms = isRemoving
+      ? formData.fundingPrograms.filter((p) => p !== program)
+      : [...formData.fundingPrograms, program];
+
+    setFormData((prev) => ({ ...prev, fundingPrograms: nextPrograms }));
+
+    if (!isRemoving) {
+      const toCheck = getAgencyIdsForProgram(program);
+      const unchecked = toCheck.filter(
+        (id) => !agencies.find((a) => a.id === id)?.checked
+      );
+      if (unchecked.length > 0) {
+        setAgencies((prev) =>
+          prev.map((a) => (toCheck.includes(a.id) ? { ...a, checked: true } : a))
+        );
+        const names = agencies
+          .filter((a) => unchecked.includes(a.id))
+          .map((a) => a.name.split(" ")[0]);
+        setRulebookSuggestHint(
+          `Suggested rulebooks for ${program}: ${names.join(", ")} — change anytime above.`
+        );
+      }
+    }
   };
 
   const selectedAgencies = agencies.filter((a) => a.checked).map((a) => a.id);
@@ -109,6 +127,7 @@ export default function Home() {
         onLoanTypeChange={setLoanType}
         fundingPrograms={formData.fundingPrograms}
         onToggleFundingProgram={toggleFundingProgram}
+        rulebookSuggestHint={rulebookSuggestHint}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         <header className="bg-white border-b border-border-subtle px-8 pt-6 pb-4 shadow-sm shrink-0">
