@@ -42,12 +42,18 @@ import {
   buildGuideOpeningSuffix,
   resolveTermSheetGuide,
 } from "@/lib/term-sheet-guide-bridge";
+import { isWizardLlmConversationEnabled } from "@/lib/wizard-conversation-config";
+import {
+  createConversationTurnAbortSignal,
+  fetchConversationTurn,
+} from "@/lib/wizard-conversation-client";
 import {
   applyFollowUpAnswer,
   buildAcknowledgment,
   buildCategoryTransition,
   buildFollowUpAcknowledgment,
   buildOpeningMessage,
+  clarificationToFollowUp,
   getAnswerByField,
   getFollowUpQuestion,
   isRedundantLoanTypeQuestion,
@@ -110,6 +116,7 @@ export function GuidedReviewWizard({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [inputValue, setInputValue] = useState("");
   const [isEnriching, setIsEnriching] = useState(false);
+  const [isGeneratingAck, setIsGeneratingAck] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [hasStarted, setHasStarted] = useState(false);
@@ -169,6 +176,10 @@ export function GuidedReviewWizard({
     : questions.length > 0
       ? ((currentIndex + 1) / questions.length) * 100
       : 0;
+  const completedFollowUpKeysSerialized = useMemo(
+    () => [...completedFollowUpKeys].sort().join("\0"),
+    [completedFollowUpKeys]
+  );
 
   const syncField = (field: string, value: string) => {
     onDealSync?.(field as DealFieldKey, value);
@@ -198,7 +209,7 @@ export function GuidedReviewWizard({
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isSynthesizing, isEnriching]);
+  }, [messages, isSynthesizing, isEnriching, isGeneratingAck]);
 
   useEffect(() => {
     prefetchWizardQuestions(loanType, selectedAgencies, fundingPrograms);
@@ -232,6 +243,7 @@ export function GuidedReviewWizard({
       isComplete,
       completedFollowUpKeys: [...completedFollowUpKeys],
       followUpTranscript,
+      activeFollowUp,
       questionsLocked: questionsLockedRef.current,
       analysisResult: isComplete ? sessionAnalysis : null,
       analysisBaseline: isComplete ? sessionAnalysisBaseline : null,
@@ -249,8 +261,9 @@ export function GuidedReviewWizard({
     answers,
     messages,
     currentIndex,
-    completedFollowUpKeys,
+    completedFollowUpKeysSerialized,
     followUpTranscript,
+    activeFollowUp,
     sessionAnalysis,
     sessionAnalysisBaseline,
   ]);
@@ -479,7 +492,7 @@ export function GuidedReviewWizard({
     setFollowUpTranscript(savedSession.followUpTranscript);
     setSessionAnalysis(savedSession.analysisResult ?? null);
     questionsLockedRef.current = savedSession.questionsLocked;
-    setActiveFollowUp(null);
+    setActiveFollowUp(savedSession.activeFollowUp ?? null);
     setInputValue("");
     setErrorMessage("");
     setEnrichedApplied(true);
@@ -631,7 +644,7 @@ export function GuidedReviewWizard({
     appendAssistantMessages(batch);
   };
 
-  const proceedAfterMainAnswer = (
+  const appendScriptedAcknowledgment = (
     triggerQuestion: WizardQuestion,
     answerValue: string,
     updatedAnswers: WizardAnswer[]
@@ -643,9 +656,14 @@ export function GuidedReviewWizard({
       questions,
       conversationContext
     );
-
     appendAssistantMessages([{ content: ack, isAcknowledgment: true }]);
+  };
 
+  const proceedWithRuleBasedFollowUp = (
+    triggerQuestion: WizardQuestion,
+    answerValue: string,
+    updatedAnswers: WizardAnswer[]
+  ) => {
     const followUp = getFollowUpQuestion(
       triggerQuestion,
       answerValue,
@@ -672,8 +690,82 @@ export function GuidedReviewWizard({
     advanceToNextMainQuestion(updatedAnswers);
   };
 
-  const handleSend = () => {
-    if (!currentQuestion || isSynthesizing) return;
+  const proceedAfterMainAnswer = async (
+    triggerQuestion: WizardQuestion,
+    answerValue: string,
+    updatedAnswers: WizardAnswer[]
+  ) => {
+    if (!isWizardLlmConversationEnabled()) {
+      appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
+      proceedWithRuleBasedFollowUp(triggerQuestion, answerValue, updatedAnswers);
+      return;
+    }
+
+    setIsGeneratingAck(true);
+    const { signal, cancel } = createConversationTurnAbortSignal();
+
+    try {
+      const guide = resolveTermSheetGuide(loanType, selectedAgencies, fundingPrograms);
+      const result = await fetchConversationTurn(
+        {
+          loanType,
+          agencies: selectedAgencies,
+          fundingPrograms,
+          triggerQuestion,
+          answerValue,
+          skipped: false,
+          questions,
+          answers: updatedAnswers,
+          termSheetGuideSummary: guide?.summary?.trim(),
+          recentMessages: messages.slice(-6).map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        },
+        signal
+      );
+
+      if (result.success) {
+        appendAssistantMessages([
+          { content: result.acknowledgment, isAcknowledgment: true },
+        ]);
+
+        if (
+          result.needsClarification &&
+          result.clarification &&
+          !completedFollowUpKeys.has(result.clarification.clarificationKey)
+        ) {
+          const clarification = clarificationToFollowUp(
+            result.clarification,
+            triggerQuestion.category
+          );
+          setActiveFollowUp(clarification);
+          setInputValue("");
+          appendAssistantMessages([
+            {
+              content: clarification.question,
+              questionId: clarification.id,
+              helpText: clarification.helpText,
+              category: clarification.category,
+            },
+          ]);
+          return;
+        }
+      } else {
+        appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
+      }
+    } catch {
+      appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
+    } finally {
+      cancel();
+      setIsGeneratingAck(false);
+    }
+
+    proceedWithRuleBasedFollowUp(triggerQuestion, answerValue, updatedAnswers);
+  };
+
+  const handleSend = async () => {
+    if (!currentQuestion || isSynthesizing || isGeneratingAck) return;
 
     const trimmed = inputValue.trim();
     if (!trimmed && currentQuestion.required) {
@@ -690,24 +782,25 @@ export function GuidedReviewWizard({
     setInputValue("");
 
     if (activeFollowUp) {
-      const existing = getAnswerByField(answers, questions, activeFollowUp.storeInField);
-      const merged = applyFollowUpAnswer(existing, activeFollowUp, trimmed);
+      const followUp = activeFollowUp;
+      const existing = getAnswerByField(answers, questions, followUp.storeInField);
+      const merged = applyFollowUpAnswer(existing, followUp, trimmed);
 
       let updatedAnswers = [
-        ...answers.filter((a) => a.questionId !== activeFollowUp.id),
-        { questionId: activeFollowUp.id, value: trimmed, skipped: false },
+        ...answers.filter((a) => a.questionId !== followUp.id),
+        { questionId: followUp.id, value: trimmed, skipped: false },
       ];
-      updatedAnswers = upsertFieldAnswer(activeFollowUp.storeInField, merged, updatedAnswers);
+      updatedAnswers = upsertFieldAnswer(followUp.storeInField, merged, updatedAnswers);
 
       setAnswers(updatedAnswers);
-      syncField(activeFollowUp.storeInField, merged);
-      setCompletedFollowUpKeys((prev) => new Set(prev).add(activeFollowUp.followUpKey));
+      syncField(followUp.storeInField, merged);
+      setCompletedFollowUpKeys((prev) => new Set(prev).add(followUp.followUpKey));
       setFollowUpTranscript((prev) => [
         ...prev,
         {
-          questionId: activeFollowUp.id,
-          category: activeFollowUp.category,
-          question: activeFollowUp.question,
+          questionId: followUp.id,
+          category: followUp.category,
+          question: followUp.question,
           answer: trimmed,
           skipped: false,
         },
@@ -717,7 +810,17 @@ export function GuidedReviewWizard({
       appendAssistantMessages([
         { content: buildFollowUpAcknowledgment(trimmed), isAcknowledgment: true },
       ]);
-      advanceToNextMainQuestion(updatedAnswers);
+
+      if (followUp.source === "llm" && mainQuestion) {
+        const mainAnswer = updatedAnswers.find((a) => a.questionId === mainQuestion.id);
+        proceedWithRuleBasedFollowUp(
+          mainQuestion,
+          mainAnswer?.value ?? "",
+          updatedAnswers
+        );
+      } else {
+        advanceToNextMainQuestion(updatedAnswers);
+      }
       return;
     }
 
@@ -735,7 +838,7 @@ export function GuidedReviewWizard({
     setAnswers(updatedAnswers);
     syncField(mainQuestion.field, trimmed);
 
-    proceedAfterMainAnswer(mainQuestion, trimmed, updatedAnswers);
+    await proceedAfterMainAnswer(mainQuestion, trimmed, updatedAnswers);
   };
 
   const handleSkip = () => {
@@ -747,20 +850,31 @@ export function GuidedReviewWizard({
     setMessages((prev) => [...prev, { role: "user", content: "Skipped", skipped: true }]);
 
     if (activeFollowUp) {
-      setCompletedFollowUpKeys((prev) => new Set(prev).add(activeFollowUp.followUpKey));
+      const followUp = activeFollowUp;
+      setCompletedFollowUpKeys((prev) => new Set(prev).add(followUp.followUpKey));
       setFollowUpTranscript((prev) => [
         ...prev,
         {
-          questionId: activeFollowUp.id,
-          category: activeFollowUp.category,
-          question: activeFollowUp.question,
+          questionId: followUp.id,
+          category: followUp.category,
+          question: followUp.question,
           answer: "",
           skipped: true,
         },
       ]);
       setActiveFollowUp(null);
       appendAssistantMessages([{ content: "No problem — moving on.", isAcknowledgment: true }]);
-      advanceToNextMainQuestion(answers);
+
+      if (followUp.source === "llm" && mainQuestion) {
+        const mainAnswer = answers.find((a) => a.questionId === mainQuestion.id);
+        proceedWithRuleBasedFollowUp(
+          mainQuestion,
+          mainAnswer?.value ?? "",
+          answers
+        );
+      } else {
+        advanceToNextMainQuestion(answers);
+      }
       return;
     }
 
@@ -1057,7 +1171,7 @@ export function GuidedReviewWizard({
             </div>
           ))}
 
-          {isSynthesizing && (
+          {(isGeneratingAck || isSynthesizing) && (
             <div className="flex gap-3">
               <div className="w-8 h-8 rounded-full bg-brand/10 flex items-center justify-center shrink-0 ring-1 ring-brand/20">
                 <Building2 className="w-4 h-4 text-brand" />
@@ -1084,7 +1198,7 @@ export function GuidedReviewWizard({
           </div>
         )}
 
-        {!isComplete && !isSynthesizing && currentQuestion && (
+        {!isComplete && !isSynthesizing && !isGeneratingAck && currentQuestion && (
           <div className="p-4 border-t border-slate-100 bg-white space-y-3">
             {currentQuestion.inputType === "select" ? (
               <select

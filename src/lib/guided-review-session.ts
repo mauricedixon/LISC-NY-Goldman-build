@@ -1,3 +1,4 @@
+import type { FollowUpQuestion } from "@/lib/wizard-conversation";
 import type { FollowUpTranscriptEntry } from "@/lib/wizard-interview-transcript";
 import type { TermSheetGuideResult } from "@/types/term-sheet-guide";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
@@ -27,6 +28,7 @@ export interface GuidedReviewSession {
   isComplete: boolean;
   completedFollowUpKeys: string[];
   followUpTranscript: FollowUpTranscriptEntry[];
+  activeFollowUp?: FollowUpQuestion | null;
   questionsLocked: boolean;
   analysisResult?: AnalysisResult | null;
   analysisBaseline?: string | null;

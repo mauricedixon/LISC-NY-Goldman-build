@@ -13,6 +13,8 @@ export interface FollowUpQuestion extends WizardQuestion {
   storeInField: DealFieldKey;
   /** Merge into existing field value vs replace. */
   mergeMode: "append" | "replace";
+  /** Rule-based follow-up vs LLM clarification (Phase 2a). */
+  source?: "rule" | "llm";
 }
 
 export function getAnswerByField(
@@ -367,4 +369,29 @@ export function applyFollowUpAnswer(
 /** Strip markdown bold markers for plain chat display. */
 export function plainAcknowledgment(text: string): string {
   return text.replace(/\*\*/g, "");
+}
+
+/** Convert an LLM clarification into the shared follow-up UX shape. */
+export function clarificationToFollowUp(
+  clarification: {
+    question: string;
+    helpText?: string;
+    clarificationKey: string;
+    storeInField: DealFieldKey;
+  },
+  category: string
+): FollowUpQuestion {
+  return {
+    id: clarification.clarificationKey,
+    followUpKey: clarification.clarificationKey,
+    category,
+    field: clarification.storeInField,
+    storeInField: clarification.storeInField,
+    mergeMode: "append",
+    question: clarification.question,
+    helpText: clarification.helpText,
+    inputType: "textarea",
+    required: false,
+    source: "llm",
+  };
 }
