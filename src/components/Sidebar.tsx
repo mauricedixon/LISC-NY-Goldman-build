@@ -1,7 +1,8 @@
 "use client";
 
-import { Building2, ChevronDown, CheckSquare } from "lucide-react";
+import { Building2, ChevronDown, CheckSquare, X } from "lucide-react";
 import { getAgencyStyle } from "@/lib/agencies";
+import { formatRulebookHintMessage, type RulebookHint } from "@/lib/rulebook-hints";
 import { FUNDING_PROGRAMS } from "@/types/deal";
 
 export interface Agency {
@@ -27,6 +28,8 @@ interface SidebarProps {
   onLoanTypeChange: (value: LoanType) => void;
   fundingPrograms: string[];
   onToggleFundingProgram: (program: string) => void;
+  rulebookHint?: RulebookHint | null;
+  onDismissRulebookHint?: () => void;
 }
 
 export function Sidebar({
@@ -36,6 +39,8 @@ export function Sidebar({
   onLoanTypeChange,
   fundingPrograms,
   onToggleFundingProgram,
+  rulebookHint,
+  onDismissRulebookHint,
 }: SidebarProps) {
   const selected = agencies.filter((a) => a.checked);
   const selectedCount = selected.length;
@@ -126,6 +131,22 @@ export function Sidebar({
             </span>
           </div>
           <p className="text-xs text-slate-500">Which agency rulebooks constrain AI search.</p>
+
+          {rulebookHint && (
+            <div className="rounded-lg border border-amber-700/40 bg-amber-950/30 px-3 py-2.5 space-y-2">
+              <p className="text-xs text-amber-200/90 leading-relaxed">
+                {formatRulebookHintMessage(rulebookHint)}
+              </p>
+              <button
+                type="button"
+                onClick={onDismissRulebookHint}
+                className="inline-flex items-center gap-1 text-[10px] text-amber-300/80 hover:text-amber-200"
+              >
+                <X className="w-3 h-3" />
+                Dismiss
+              </button>
+            </div>
+          )}
 
           <div className="space-y-1">
             {agencies.map((agency) => {

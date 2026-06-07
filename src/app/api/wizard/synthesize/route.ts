@@ -47,15 +47,23 @@ function answersToFormData(
 
 export async function POST(request: NextRequest) {
   try {
-    const { loanType, agencies, questions, answers, fundingPrograms, followUpTranscript } =
-      await request.json() as {
-        loanType: string;
-        agencies: string[];
-        questions: WizardQuestion[];
-        answers: WizardAnswer[];
-        fundingPrograms?: string[];
-        followUpTranscript?: FollowUpTranscriptEntry[];
-      };
+    const {
+      loanType,
+      agencies,
+      questions,
+      answers,
+      fundingPrograms,
+      followUpTranscript,
+      termSheetGuideContext,
+    } = await request.json() as {
+      loanType: string;
+      agencies: string[];
+      questions: WizardQuestion[];
+      answers: WizardAnswer[];
+      fundingPrograms?: string[];
+      followUpTranscript?: FollowUpTranscriptEntry[];
+      termSheetGuideContext?: string;
+    };
 
     if (!loanType || !agencies?.length) {
       return NextResponse.json(
@@ -104,6 +112,17 @@ Here is the full guided interview transcript:
 <interview>
 ${interviewSummary}
 </interview>
+${
+  termSheetGuideContext
+    ? `
+Here is the term sheet guide checklist context for this deal (essential tier):
+<term_sheet_guide>
+${termSheetGuideContext}
+</term_sheet_guide>
+Cross-check interview answers against these program checklist items where relevant.
+`
+    : ""
+}
 
 Respond strictly in the following JSON format:
 ${ANALYSIS_JSON_SCHEMA}

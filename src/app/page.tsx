@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileCheck, ChevronRight, ClipboardList, Sparkles } from "lucide-react";
+import { FileCheck, ChevronRight, ClipboardList } from "lucide-react";
 import { Sidebar, LOAN_TYPES, type LoanType } from "@/components/Sidebar";
 import { ContextStrip } from "@/components/ContextStrip";
 import { PolicyChatWidget } from "@/components/PolicyChatWidget";
@@ -10,6 +10,13 @@ import { GuidedReviewWizard } from "@/components/completeness/GuidedReviewWizard
 import { TermSheetGuideSection } from "@/components/completeness/TermSheetGuideSection";
 import { buildAnalysisInputFingerprint } from "@/lib/compliance-snapshot";
 import { applyWizardAnswersToFormData, type DealFieldKey } from "@/lib/wizard-form-sync";
+import {
+  buildRulebookHint,
+  dismissPairsForUncheckedAgency,
+  dismissRulebookHint,
+  loadDismissedHintPairs,
+  type RulebookHint,
+} from "@/lib/rulebook-hints";
 import { EMPTY_DEAL_FORM } from "@/types/deal";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
 
@@ -29,20 +36,62 @@ export default function Home() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [analysisBaseline, setAnalysisBaseline] = useState<string | null>(null);
   const [checkMode, setCheckMode] = useState<"manual" | "guided">("guided");
+  const [dismissedHintPairs, setDismissedHintPairs] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [rulebookHint, setRulebookHint] = useState<RulebookHint | null>(null);
+
+  useEffect(() => {
+    setDismissedHintPairs(loadDismissedHintPairs());
+  }, []);
 
   const toggleAgency = (id: string) => {
-    setAgencies((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, checked: !a.checked } : a))
+    const wasChecked = agencies.find((a) => a.id === id)?.checked ?? false;
+    const nextAgencies = agencies.map((a) =>
+      a.id === id ? { ...a, checked: !wasChecked } : a
     );
+
+    let nextDismissed = dismissedHintPairs;
+    if (wasChecked) {
+      nextDismissed = dismissPairsForUncheckedAgency(
+        id,
+        formData.fundingPrograms,
+        dismissedHintPairs
+      );
+      setDismissedHintPairs(nextDismissed);
+    }
+
+    setAgencies(nextAgencies);
+
+    if (rulebookHint) {
+      setRulebookHint(
+        buildRulebookHint(rulebookHint.program, nextAgencies, nextDismissed)
+      );
+    }
   };
 
   const toggleFundingProgram = (program: string) => {
+    const isRemoving = formData.fundingPrograms.includes(program);
+
     setFormData((prev) => ({
       ...prev,
-      fundingPrograms: prev.fundingPrograms.includes(program)
+      fundingPrograms: isRemoving
         ? prev.fundingPrograms.filter((p) => p !== program)
         : [...prev.fundingPrograms, program],
     }));
+
+    if (!isRemoving) {
+      const hint = buildRulebookHint(program, agencies, dismissedHintPairs);
+      setRulebookHint(hint);
+    } else if (rulebookHint?.program === program) {
+      setRulebookHint(null);
+    }
+  };
+
+  const handleDismissRulebookHint = () => {
+    if (!rulebookHint) return;
+    setDismissedHintPairs((prev) => dismissRulebookHint(rulebookHint, prev));
+    setRulebookHint(null);
   };
 
   const selectedAgencies = agencies.filter((a) => a.checked).map((a) => a.id);
@@ -106,6 +155,8 @@ export default function Home() {
         onLoanTypeChange={setLoanType}
         fundingPrograms={formData.fundingPrograms}
         onToggleFundingProgram={toggleFundingProgram}
+        rulebookHint={rulebookHint}
+        onDismissRulebookHint={handleDismissRulebookHint}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         <header className="bg-white border-b border-border-subtle px-8 pt-6 pb-4 shadow-sm shrink-0">
@@ -150,11 +201,7 @@ export default function Home() {
               </p>
             </div>
 
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                <Sparkles className="w-4 h-4 text-brand" />
-                Guided Review
-              </div>
+            <div className="flex justify-end">
               <button
                 type="button"
                 onClick={() =>
@@ -162,7 +209,9 @@ export default function Home() {
                 }
                 className="text-xs text-slate-500 hover:text-slate-700 underline-offset-2 hover:underline"
               >
-                {checkMode === "guided" ? "Switch to manual entry" : "Back to Guided Review"}
+                {checkMode === "guided"
+                  ? "Prefer a form? Manual entry"
+                  : "← Use Guided Review"}
               </button>
             </div>
 
@@ -177,6 +226,7 @@ export default function Home() {
                 onDealSync={handleDealFieldSync}
                 onWizardAnswersSync={handleWizardAnswersSync}
                 onWizardReset={handleWizardReset}
+                onAnalysisRestore={setAnalysisResult}
               />
             </div>
 

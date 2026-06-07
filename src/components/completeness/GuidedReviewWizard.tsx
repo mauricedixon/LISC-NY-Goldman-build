@@ -24,7 +24,18 @@ import {
   getWizardContextKey,
   prefetchWizardQuestions,
 } from "@/lib/wizard-questions";
+import {
+  clearGuidedReviewSession,
+  loadGuidedReviewSession,
+  saveGuidedReviewSession,
+  type GuidedReviewSession,
+} from "@/lib/guided-review-session";
 import type { FollowUpTranscriptEntry } from "@/lib/wizard-interview-transcript";
+import { getCachedTermSheetGuide } from "@/lib/term-sheet-guide-cache";
+import {
+  buildGuideContextForSynthesize,
+  buildGuideOpeningSuffix,
+} from "@/lib/term-sheet-guide-bridge";
 import {
   applyFollowUpAnswer,
   buildAcknowledgment,
@@ -51,6 +62,7 @@ interface GuidedReviewWizardProps {
     answers: WizardAnswer[]
   ) => void;
   onWizardReset?: () => void;
+  onAnalysisRestore?: (analysis: AnalysisResult) => void;
 }
 
 interface ChatMessage {
@@ -82,6 +94,7 @@ export function GuidedReviewWizard({
   onDealSync,
   onWizardAnswersSync,
   onWizardReset,
+  onAnalysisRestore,
 }: GuidedReviewWizardProps) {
   const [questions, setQuestions] = useState<WizardQuestion[]>([]);
   const [answers, setAnswers] = useState<WizardAnswer[]>([]);
@@ -102,6 +115,9 @@ export function GuidedReviewWizard({
   const [followUpTranscript, setFollowUpTranscript] = useState<FollowUpTranscriptEntry[]>(
     []
   );
+  const [savedSession, setSavedSession] = useState<GuidedReviewSession | null>(null);
+  const [sessionPromptOpen, setSessionPromptOpen] = useState(false);
+  const [sessionAnalysis, setSessionAnalysis] = useState<AnalysisResult | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const questionsLockedRef = useRef(false);
@@ -176,6 +192,45 @@ export function GuidedReviewWizard({
     prefetchWizardQuestions(loanType, selectedAgencies, fundingPrograms);
   }, [contextKey, loanType, selectedAgencies, fundingPrograms]);
 
+  useEffect(() => {
+    const session = loadGuidedReviewSession();
+    if (session?.hasStarted) {
+      setSavedSession(session);
+      setSessionPromptOpen(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hasStarted) return;
+
+    saveGuidedReviewSession({
+      version: 1,
+      contextKey,
+      savedAt: new Date().toISOString(),
+      questions,
+      answers,
+      messages,
+      currentIndex,
+      hasStarted,
+      isComplete,
+      completedFollowUpKeys: [...completedFollowUpKeys],
+      followUpTranscript,
+      questionsLocked: questionsLockedRef.current,
+      analysisResult: isComplete ? sessionAnalysis : null,
+    });
+  }, [
+    hasStarted,
+    isComplete,
+    contextKey,
+    questions,
+    answers,
+    messages,
+    currentIndex,
+    completedFollowUpKeys,
+    followUpTranscript,
+    sessionAnalysis,
+  ]);
+
   const loadEnrichedQuestionsInBackground = useCallback(
     async (initialQuestions: WizardQuestion[], initialAnswers: WizardAnswer[]) => {
       setIsEnriching(true);
@@ -226,6 +281,10 @@ export function GuidedReviewWizard({
       return;
     }
 
+    clearGuidedReviewSession();
+    setSavedSession(null);
+    setSessionPromptOpen(false);
+    setSessionAnalysis(null);
     setErrorMessage("");
     setIsComplete(false);
     setEnrichedApplied(false);
@@ -242,7 +301,12 @@ export function GuidedReviewWizard({
     );
     const initialQuestions = cached ?? buildFallbackQuestions(loanType);
     let initialAnswers = prefillLoanTypeAnswer(initialQuestions, loanType);
-    const opening = plainAcknowledgment(buildOpeningMessage(conversationContext));
+    const guide = getCachedTermSheetGuide(loanType, selectedAgencies, fundingPrograms);
+    const openingBase = buildOpeningMessage(conversationContext);
+    const openingWithGuide = guide
+      ? openingBase + buildGuideOpeningSuffix(guide)
+      : openingBase;
+    const opening = plainAcknowledgment(openingWithGuide);
     const openingMessages: ChatMessage[] = opening
       ? [{ role: "assistant", content: opening }]
       : [];
@@ -349,10 +413,50 @@ export function GuidedReviewWizard({
     setActiveFollowUp(null);
     setCompletedFollowUpKeys(new Set());
     setFollowUpTranscript([]);
+    setSessionAnalysis(null);
+    setSessionPromptOpen(false);
+    setSavedSession(null);
     questionsLockedRef.current = false;
+    clearGuidedReviewSession();
     setAnalysisResult(null);
     onAnalysisCleared?.();
     onWizardReset?.();
+  };
+
+  const discardSavedSession = () => {
+    clearGuidedReviewSession();
+    setSavedSession(null);
+    setSessionPromptOpen(false);
+  };
+
+  const resumeSavedSession = () => {
+    if (!savedSession) return;
+
+    setQuestions(savedSession.questions);
+    setAnswers(savedSession.answers);
+    setMessages(savedSession.messages);
+    setCurrentIndex(savedSession.currentIndex);
+    setHasStarted(savedSession.hasStarted);
+    setIsComplete(savedSession.isComplete);
+    setCompletedFollowUpKeys(new Set(savedSession.completedFollowUpKeys));
+    setFollowUpTranscript(savedSession.followUpTranscript);
+    setSessionAnalysis(savedSession.analysisResult ?? null);
+    questionsLockedRef.current = savedSession.questionsLocked;
+    setActiveFollowUp(null);
+    setInputValue("");
+    setErrorMessage("");
+    setEnrichedApplied(true);
+    setSessionPromptOpen(false);
+
+    syncAllAnswers(savedSession.questions, savedSession.answers);
+
+    if (savedSession.analysisResult) {
+      setAnalysisResult(savedSession.analysisResult);
+      onAnalysisRestore?.(savedSession.analysisResult);
+      if (savedSession.isComplete) {
+        onAnalysisComplete?.();
+      }
+    }
   };
 
   const upsertFieldAnswer = (
@@ -663,11 +767,20 @@ export function GuidedReviewWizard({
           answers: finalAnswers,
           fundingPrograms,
           followUpTranscript,
+          termSheetGuideContext: (() => {
+            const guide = getCachedTermSheetGuide(
+              loanType,
+              selectedAgencies,
+              fundingPrograms
+            );
+            return guide ? buildGuideContextForSynthesize(guide) : undefined;
+          })(),
         }),
       });
       const data = await response.json();
       if (response.ok && data.success) {
         setAnalysisResult(data.analysis);
+        setSessionAnalysis(data.analysis);
         onAnalysisComplete?.();
         setIsComplete(true);
         setTimeout(() => {
@@ -696,11 +809,42 @@ export function GuidedReviewWizard({
       selectedAgencies,
       fundingPrograms
     );
+    const contextMatchesSaved = savedSession?.contextKey === contextKey;
 
     return (
       <div className="relative bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-emerald-50/80 via-white to-sky-50/40 pointer-events-none" />
           <div className="relative px-8 py-10 text-center">
+            {sessionPromptOpen && savedSession && (
+              <div className="max-w-md mx-auto mb-6 text-left rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-3">
+                <p className="text-sm font-medium text-amber-900">
+                  Resume your guided review?
+                </p>
+                <p className="text-xs text-amber-800/90 leading-relaxed">
+                  {contextMatchesSaved
+                    ? savedSession.isComplete
+                      ? "A completed review is saved from this session."
+                      : "An in-progress review is saved for this deal context."
+                    : "Saved review used a different sidebar context — resume anyway or start fresh."}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={resumeSavedSession}
+                    className="inline-flex items-center gap-1.5 bg-[#0d6e52] hover:bg-[#0a5a43] text-white px-4 py-2 rounded-lg text-xs font-medium"
+                  >
+                    Resume
+                  </button>
+                  <button
+                    type="button"
+                    onClick={discardSavedSession}
+                    className="inline-flex items-center gap-1.5 border border-amber-300 text-amber-900 hover:bg-amber-100/80 px-4 py-2 rounded-lg text-xs font-medium"
+                  >
+                    Start fresh
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="w-16 h-16 bg-brand/10 rounded-2xl flex items-center justify-center mx-auto mb-5 ring-1 ring-brand/20">
               <Sparkles className="w-8 h-8 text-brand" />
             </div>
