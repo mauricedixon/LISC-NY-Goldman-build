@@ -9,7 +9,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatFundingPrograms } from "@/types/deal";
+import { buildAnalysisInputFingerprint } from "@/lib/compliance-snapshot";
+import { EMPTY_DEAL_FORM, formatFundingPrograms } from "@/types/deal";
 import { applyWizardAnswersToFormData, type DealFieldKey } from "@/lib/wizard-form-sync";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
 import { getAccentStyle, getCategoryStyle } from "@/lib/agencies";
@@ -26,15 +27,20 @@ import {
 } from "@/lib/wizard-questions";
 import {
   clearGuidedReviewSession,
+  GUIDED_REVIEW_SESSION_VERSION,
   loadGuidedReviewSession,
   saveGuidedReviewSession,
   type GuidedReviewSession,
 } from "@/lib/guided-review-session";
 import type { FollowUpTranscriptEntry } from "@/lib/wizard-interview-transcript";
-import { getCachedTermSheetGuide } from "@/lib/term-sheet-guide-cache";
+import {
+  getTermSheetGuideContextKey,
+  seedTermSheetGuideCache,
+} from "@/lib/term-sheet-guide-cache";
 import {
   buildGuideContextForSynthesize,
   buildGuideOpeningSuffix,
+  resolveTermSheetGuide,
 } from "@/lib/term-sheet-guide-bridge";
 import {
   applyFollowUpAnswer,
@@ -63,6 +69,7 @@ interface GuidedReviewWizardProps {
   ) => void;
   onWizardReset?: () => void;
   onAnalysisRestore?: (analysis: AnalysisResult) => void;
+  onAnalysisBaselineRestore?: (baseline: string) => void;
 }
 
 interface ChatMessage {
@@ -95,6 +102,7 @@ export function GuidedReviewWizard({
   onWizardAnswersSync,
   onWizardReset,
   onAnalysisRestore,
+  onAnalysisBaselineRestore,
 }: GuidedReviewWizardProps) {
   const [questions, setQuestions] = useState<WizardQuestion[]>([]);
   const [answers, setAnswers] = useState<WizardAnswer[]>([]);
@@ -118,6 +126,10 @@ export function GuidedReviewWizard({
   const [savedSession, setSavedSession] = useState<GuidedReviewSession | null>(null);
   const [sessionPromptOpen, setSessionPromptOpen] = useState(false);
   const [sessionAnalysis, setSessionAnalysis] = useState<AnalysisResult | null>(null);
+  const [sessionAnalysisBaseline, setSessionAnalysisBaseline] = useState<string | null>(
+    null
+  );
+  const [resumedContextMismatch, setResumedContextMismatch] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const questionsLockedRef = useRef(false);
@@ -203,8 +215,13 @@ export function GuidedReviewWizard({
   useEffect(() => {
     if (!hasStarted) return;
 
+    const guide = resolveTermSheetGuide(loanType, selectedAgencies, fundingPrograms);
+    const guideKey = guide
+      ? getTermSheetGuideContextKey(loanType, selectedAgencies, fundingPrograms)
+      : undefined;
+
     saveGuidedReviewSession({
-      version: 1,
+      version: GUIDED_REVIEW_SESSION_VERSION,
       contextKey,
       savedAt: new Date().toISOString(),
       questions,
@@ -217,11 +234,17 @@ export function GuidedReviewWizard({
       followUpTranscript,
       questionsLocked: questionsLockedRef.current,
       analysisResult: isComplete ? sessionAnalysis : null,
+      analysisBaseline: isComplete ? sessionAnalysisBaseline : null,
+      termSheetGuideKey: guideKey,
+      termSheetGuide: guide ?? undefined,
     });
   }, [
     hasStarted,
     isComplete,
     contextKey,
+    loanType,
+    selectedAgencies,
+    fundingPrograms,
     questions,
     answers,
     messages,
@@ -229,6 +252,7 @@ export function GuidedReviewWizard({
     completedFollowUpKeys,
     followUpTranscript,
     sessionAnalysis,
+    sessionAnalysisBaseline,
   ]);
 
   const loadEnrichedQuestionsInBackground = useCallback(
@@ -285,6 +309,8 @@ export function GuidedReviewWizard({
     setSavedSession(null);
     setSessionPromptOpen(false);
     setSessionAnalysis(null);
+    setSessionAnalysisBaseline(null);
+    setResumedContextMismatch(false);
     setErrorMessage("");
     setIsComplete(false);
     setEnrichedApplied(false);
@@ -301,7 +327,7 @@ export function GuidedReviewWizard({
     );
     const initialQuestions = cached ?? buildFallbackQuestions(loanType);
     let initialAnswers = prefillLoanTypeAnswer(initialQuestions, loanType);
-    const guide = getCachedTermSheetGuide(loanType, selectedAgencies, fundingPrograms);
+    const guide = resolveTermSheetGuide(loanType, selectedAgencies, fundingPrograms);
     const openingBase = buildOpeningMessage(conversationContext);
     const openingWithGuide = guide
       ? openingBase + buildGuideOpeningSuffix(guide)
@@ -414,6 +440,8 @@ export function GuidedReviewWizard({
     setCompletedFollowUpKeys(new Set());
     setFollowUpTranscript([]);
     setSessionAnalysis(null);
+    setSessionAnalysisBaseline(null);
+    setResumedContextMismatch(false);
     setSessionPromptOpen(false);
     setSavedSession(null);
     questionsLockedRef.current = false;
@@ -431,6 +459,15 @@ export function GuidedReviewWizard({
 
   const resumeSavedSession = () => {
     if (!savedSession) return;
+
+    if (savedSession.termSheetGuide && savedSession.termSheetGuideKey) {
+      seedTermSheetGuideCache(
+        savedSession.termSheetGuideKey,
+        savedSession.termSheetGuide
+      );
+    }
+
+    setResumedContextMismatch(savedSession.contextKey !== contextKey);
 
     setQuestions(savedSession.questions);
     setAnswers(savedSession.answers);
@@ -453,7 +490,11 @@ export function GuidedReviewWizard({
     if (savedSession.analysisResult) {
       setAnalysisResult(savedSession.analysisResult);
       onAnalysisRestore?.(savedSession.analysisResult);
-      if (savedSession.isComplete) {
+
+      if (savedSession.analysisBaseline) {
+        setSessionAnalysisBaseline(savedSession.analysisBaseline);
+        onAnalysisBaselineRestore?.(savedSession.analysisBaseline);
+      } else if (savedSession.isComplete && savedSession.contextKey === contextKey) {
         onAnalysisComplete?.();
       }
     }
@@ -768,7 +809,7 @@ export function GuidedReviewWizard({
           fundingPrograms,
           followUpTranscript,
           termSheetGuideContext: (() => {
-            const guide = getCachedTermSheetGuide(
+            const guide = resolveTermSheetGuide(
               loanType,
               selectedAgencies,
               fundingPrograms
@@ -779,9 +820,27 @@ export function GuidedReviewWizard({
       });
       const data = await response.json();
       if (response.ok && data.success) {
+        const formPatch = applyWizardAnswersToFormData(
+          questions,
+          finalAnswers,
+          loanType
+        );
+        const baseline = buildAnalysisInputFingerprint(
+          {
+            ...EMPTY_DEAL_FORM,
+            fundingPrograms,
+            loanType,
+            ...formPatch,
+          },
+          loanType,
+          selectedAgencies
+        );
         setAnalysisResult(data.analysis);
         setSessionAnalysis(data.analysis);
-        onAnalysisComplete?.();
+        setSessionAnalysisBaseline(baseline);
+        setResumedContextMismatch(false);
+        syncAllAnswers(questions, finalAnswers);
+        onAnalysisBaselineRestore?.(baseline);
         setIsComplete(true);
         setTimeout(() => {
           document.getElementById("completeness-results")?.scrollIntoView({ behavior: "smooth" });
@@ -925,6 +984,12 @@ export function GuidedReviewWizard({
               style={{ width: `${progress}%` }}
             />
           </div>
+          {resumedContextMismatch && (
+            <p className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
+              Sidebar context differs from the saved session — interview answers were
+              restored, but results may not match current rulebooks or programs.
+            </p>
+          )}
         </div>
 
         <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-5 min-h-[320px]">

@@ -1,5 +1,31 @@
+import { loadGuidedReviewSession } from "@/lib/guided-review-session";
+import {
+  getCachedTermSheetGuide,
+  getTermSheetGuideContextKey,
+} from "@/lib/term-sheet-guide-cache";
 import { countItemsByTier, filterSectionsByTier } from "@/lib/term-sheet-guide-utils";
 import type { TermSheetGuideResult } from "@/types/term-sheet-guide";
+
+/** Resolve guide from memory cache or persisted session snapshot. */
+export function resolveTermSheetGuide(
+  loanType: string,
+  agencies: string[],
+  fundingPrograms: string[]
+): TermSheetGuideResult | null {
+  const key = getTermSheetGuideContextKey(loanType, agencies, fundingPrograms);
+  const cached = getCachedTermSheetGuide(loanType, agencies, fundingPrograms);
+  if (cached) return cached;
+
+  const session = loadGuidedReviewSession();
+  if (
+    session?.termSheetGuide &&
+    session.termSheetGuideKey === key
+  ) {
+    return session.termSheetGuide;
+  }
+
+  return null;
+}
 
 /** Optional suffix for Guided Review opening when a term sheet guide is cached. */
 export function buildGuideOpeningSuffix(guide: TermSheetGuideResult): string {

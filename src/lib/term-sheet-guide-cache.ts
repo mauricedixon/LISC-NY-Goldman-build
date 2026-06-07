@@ -20,6 +20,14 @@ export function getCachedTermSheetGuide(
   return cache.get(key) ?? null;
 }
 
+/** Restore a guide into the in-memory cache (e.g. after session resume). */
+export function seedTermSheetGuideCache(
+  key: string,
+  guide: TermSheetGuideResult
+): void {
+  cache.set(key, guide);
+}
+
 export function isTermSheetGuidePrefetching(
   loanType: string,
   agencies: string[],

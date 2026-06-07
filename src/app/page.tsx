@@ -227,6 +227,7 @@ export default function Home() {
                 onWizardAnswersSync={handleWizardAnswersSync}
                 onWizardReset={handleWizardReset}
                 onAnalysisRestore={setAnalysisResult}
+                onAnalysisBaselineRestore={setAnalysisBaseline}
               />
             </div>
 

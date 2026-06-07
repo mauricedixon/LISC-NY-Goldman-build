@@ -1,8 +1,9 @@
 import type { FollowUpTranscriptEntry } from "@/lib/wizard-interview-transcript";
+import type { TermSheetGuideResult } from "@/types/term-sheet-guide";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
 
 const STORAGE_KEY = "lisc-guided-review-session";
-const SESSION_VERSION = 1;
+export const GUIDED_REVIEW_SESSION_VERSION = 2;
 
 export interface GuidedReviewChatMessage {
   role: "assistant" | "user";
@@ -15,7 +16,7 @@ export interface GuidedReviewChatMessage {
 }
 
 export interface GuidedReviewSession {
-  version: typeof SESSION_VERSION;
+  version: typeof GUIDED_REVIEW_SESSION_VERSION;
   contextKey: string;
   savedAt: string;
   questions: WizardQuestion[];
@@ -28,6 +29,9 @@ export interface GuidedReviewSession {
   followUpTranscript: FollowUpTranscriptEntry[];
   questionsLocked: boolean;
   analysisResult?: AnalysisResult | null;
+  analysisBaseline?: string | null;
+  termSheetGuideKey?: string;
+  termSheetGuide?: TermSheetGuideResult;
 }
 
 export function loadGuidedReviewSession(): GuidedReviewSession | null {
@@ -36,7 +40,9 @@ export function loadGuidedReviewSession(): GuidedReviewSession | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as GuidedReviewSession;
-    if (parsed.version !== SESSION_VERSION || !parsed.contextKey) return null;
+    if (parsed.version !== GUIDED_REVIEW_SESSION_VERSION || !parsed.contextKey) {
+      return null;
+    }
     return parsed;
   } catch {
     return null;
