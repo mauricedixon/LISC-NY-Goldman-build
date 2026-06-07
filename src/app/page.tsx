@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileCheck, ChevronRight, ClipboardList, ListChecks, Sparkles } from "lucide-react";
+import { FileCheck, ChevronRight, ClipboardList, Sparkles } from "lucide-react";
 import { Sidebar, LOAN_TYPES, type LoanType } from "@/components/Sidebar";
 import { ContextStrip } from "@/components/ContextStrip";
 import { PolicyChatWidget } from "@/components/PolicyChatWidget";
@@ -142,11 +142,7 @@ export default function Home() {
               </p>
               <p>
                 <span className="font-semibold text-slate-800">Guided Review</span> — quick
-                conversational deal context
-              </p>
-              <p>
-                <span className="font-semibold text-slate-800">Manual Review</span> — enter deal
-                details in a form
+                conversational deal context (recommended)
               </p>
               <p>
                 <span className="font-semibold text-slate-800">Policy Chat</span> — bottom-right
@@ -154,30 +150,19 @@ export default function Home() {
               </p>
             </div>
 
-            <div className="flex items-center gap-1 bg-white rounded-xl border border-border-subtle p-1 w-fit shadow-sm">
-              <button
-                type="button"
-                onClick={() => setCheckMode("guided")}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                  checkMode === "guided"
-                    ? "bg-[#0d6e52] text-white shadow-sm"
-                    : "text-slate-700 hover:text-slate-900 hover:bg-slate-100"
-                }`}
-              >
-                <Sparkles className="w-4 h-4" />
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                <Sparkles className="w-4 h-4 text-brand" />
                 Guided Review
-              </button>
+              </div>
               <button
                 type="button"
-                onClick={() => setCheckMode("manual")}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                  checkMode === "manual"
-                    ? "bg-[#0d6e52] text-white shadow-sm"
-                    : "text-slate-700 hover:text-slate-900 hover:bg-slate-100"
-                }`}
+                onClick={() =>
+                  setCheckMode((mode) => (mode === "guided" ? "manual" : "guided"))
+                }
+                className="text-xs text-slate-500 hover:text-slate-700 underline-offset-2 hover:underline"
               >
-                <ListChecks className="w-4 h-4" />
-                Manual Review
+                {checkMode === "guided" ? "Switch to manual entry" : "Back to Guided Review"}
               </button>
             </div>
 

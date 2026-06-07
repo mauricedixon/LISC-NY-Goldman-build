@@ -24,6 +24,7 @@ import {
   getWizardContextKey,
   prefetchWizardQuestions,
 } from "@/lib/wizard-questions";
+import type { FollowUpTranscriptEntry } from "@/lib/wizard-interview-transcript";
 import {
   applyFollowUpAnswer,
   buildAcknowledgment,
@@ -32,6 +33,7 @@ import {
   buildOpeningMessage,
   getAnswerByField,
   getFollowUpQuestion,
+  isRedundantLoanTypeQuestion,
   plainAcknowledgment,
   type FollowUpQuestion,
 } from "@/lib/wizard-conversation";
@@ -97,8 +99,12 @@ export function GuidedReviewWizard({
   const [completedFollowUpKeys, setCompletedFollowUpKeys] = useState<Set<string>>(
     () => new Set()
   );
+  const [followUpTranscript, setFollowUpTranscript] = useState<FollowUpTranscriptEntry[]>(
+    []
+  );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const questionsLockedRef = useRef(false);
   const conversationContext = useMemo(
     () => ({ fundingPrograms, loanType }),
     [fundingPrograms, loanType]
@@ -184,7 +190,7 @@ export function GuidedReviewWizard({
             q.field !== initialQuestions[i]?.field || q.question !== initialQuestions[i]?.question
         );
 
-        if (questionsChanged) {
+        if (questionsChanged && !questionsLockedRef.current) {
           setQuestions((prevQuestions) => {
             setAnswers((prevAnswers) => {
               const remapped = remapAnswersByField(
@@ -226,6 +232,8 @@ export function GuidedReviewWizard({
     setHelpExpanded(false);
     setActiveFollowUp(null);
     setCompletedFollowUpKeys(new Set());
+    setFollowUpTranscript([]);
+    questionsLockedRef.current = false;
 
     const cached = getCachedWizardQuestions(
       loanType,
@@ -233,31 +241,89 @@ export function GuidedReviewWizard({
       fundingPrograms
     );
     const initialQuestions = cached ?? buildFallbackQuestions(loanType);
-    const initialAnswers = prefillLoanTypeAnswer(initialQuestions, loanType);
-    const firstQuestion = initialQuestions[0];
+    let initialAnswers = prefillLoanTypeAnswer(initialQuestions, loanType);
+    const opening = plainAcknowledgment(buildOpeningMessage(conversationContext));
+    const openingMessages: ChatMessage[] = opening
+      ? [{ role: "assistant", content: opening }]
+      : [];
+
+    let startIndex = 0;
+    let pendingFollowUp: FollowUpQuestion | null = null;
+    const initialFollowUpKeys = new Set<string>();
+
+    while (
+      startIndex < initialQuestions.length &&
+      isRedundantLoanTypeQuestion(initialQuestions[startIndex], loanType)
+    ) {
+      const skippedQ = initialQuestions[startIndex];
+      initialAnswers = [
+        ...initialAnswers.filter((a) => a.questionId !== skippedQ.id),
+        { questionId: skippedQ.id, value: loanType, skipped: false },
+      ];
+      openingMessages.push({
+        role: "assistant",
+        content: plainAcknowledgment(
+          buildAcknowledgment(
+            skippedQ,
+            loanType,
+            initialAnswers,
+            initialQuestions,
+            conversationContext
+          )
+        ),
+        isAcknowledgment: true,
+      });
+
+      const followUp = getFollowUpQuestion(
+        skippedQ,
+        loanType,
+        initialAnswers,
+        initialQuestions,
+        initialFollowUpKeys,
+        conversationContext
+      );
+      if (followUp) {
+        pendingFollowUp = followUp;
+        initialFollowUpKeys.add(followUp.followUpKey);
+        startIndex++;
+        break;
+      }
+
+      startIndex++;
+    }
+
+    const firstQuestion = initialQuestions[startIndex];
+    if (pendingFollowUp) {
+      openingMessages.push({
+        role: "assistant",
+        content: pendingFollowUp.question,
+        questionId: pendingFollowUp.id,
+        helpText: pendingFollowUp.helpText,
+        category: pendingFollowUp.category,
+      });
+    } else if (firstQuestion) {
+      openingMessages.push({
+        role: "assistant",
+        content: firstQuestion.question,
+        questionId: firstQuestion.id,
+        helpText: firstQuestion.helpText,
+        category: firstQuestion.category,
+      });
+    }
 
     setQuestions(initialQuestions);
     setAnswers(initialAnswers);
-    setCurrentIndex(0);
-    setInputValue(firstQuestion?.field === "loanType" ? loanType : "");
-    const opening = plainAcknowledgment(buildOpeningMessage(conversationContext));
-    setMessages(
-      firstQuestion
-        ? [
-            { role: "assistant", content: opening },
-            {
-              role: "assistant",
-              content: firstQuestion.question,
-              questionId: firstQuestion.id,
-              helpText: firstQuestion.helpText,
-              category: firstQuestion.category,
-            },
-          ]
-        : opening
-          ? [{ role: "assistant", content: opening }]
-          : []
-    );
+    setCurrentIndex(startIndex);
+    setCompletedFollowUpKeys(initialFollowUpKeys);
+    setActiveFollowUp(pendingFollowUp);
+    setInputValue("");
+    setMessages(openingMessages);
     setHasStarted(true);
+
+    if (!pendingFollowUp && !firstQuestion) {
+      handleFinish(initialAnswers);
+      return;
+    }
     syncField("loanType", loanType);
     if (initialAnswers.length) {
       syncAllAnswers(initialQuestions, initialAnswers);
@@ -282,6 +348,8 @@ export function GuidedReviewWizard({
     setEnrichedApplied(false);
     setActiveFollowUp(null);
     setCompletedFollowUpKeys(new Set());
+    setFollowUpTranscript([]);
+    questionsLockedRef.current = false;
     setAnalysisResult(null);
     onAnalysisCleared?.();
     onWizardReset?.();
@@ -329,17 +397,8 @@ export function GuidedReviewWizard({
     }
 
     const prevCategory = questions[currentIndex]?.category;
-    const nextIndex = currentIndex + 1;
-    const nextQuestion = questions[nextIndex];
-    setCurrentIndex(nextIndex);
-    setHelpExpanded(false);
-    setActiveFollowUp(null);
-
-    if (nextQuestion.field === "loanType") {
-      setInputValue(loanType);
-    } else {
-      setInputValue("");
-    }
+    let nextIndex = currentIndex + 1;
+    let workingAnswers = updatedAnswers;
 
     const batch: Array<{
       content: string;
@@ -348,6 +407,69 @@ export function GuidedReviewWizard({
       category?: string;
       isAcknowledgment?: boolean;
     }> = [];
+
+    while (
+      nextIndex < questions.length &&
+      isRedundantLoanTypeQuestion(questions[nextIndex], loanType)
+    ) {
+      const skippedQ = questions[nextIndex];
+      workingAnswers = [
+        ...workingAnswers.filter((a) => a.questionId !== skippedQ.id),
+        { questionId: skippedQ.id, value: loanType, skipped: false },
+      ];
+      setAnswers(workingAnswers);
+      syncField("loanType", loanType);
+
+      batch.push({
+        content: buildAcknowledgment(
+          skippedQ,
+          loanType,
+          workingAnswers,
+          questions,
+          conversationContext
+        ),
+        isAcknowledgment: true,
+      });
+
+      const followUp = getFollowUpQuestion(
+        skippedQ,
+        loanType,
+        workingAnswers,
+        questions,
+        completedFollowUpKeys,
+        conversationContext
+      );
+
+      if (followUp) {
+        setCurrentIndex(nextIndex);
+        setHelpExpanded(false);
+        setActiveFollowUp(followUp);
+        setInputValue("");
+        batch.push({
+          content: followUp.question,
+          questionId: followUp.id,
+          helpText: followUp.helpText,
+          category: followUp.category,
+        });
+        appendAssistantMessages(batch);
+        return;
+      }
+
+      nextIndex++;
+    }
+
+    if (nextIndex >= questions.length) {
+      setAnswers(workingAnswers);
+      handleFinish(workingAnswers);
+      return;
+    }
+
+    const nextQuestion = questions[nextIndex];
+    setCurrentIndex(nextIndex);
+    setHelpExpanded(false);
+    setActiveFollowUp(null);
+    setAnswers(workingAnswers);
+    setInputValue(nextQuestion.field === "loanType" ? loanType : "");
 
     const transition = buildCategoryTransition(prevCategory, nextQuestion.category);
     if (transition) {
@@ -405,14 +527,6 @@ export function GuidedReviewWizard({
     advanceToNextMainQuestion(updatedAnswers);
   };
 
-  useEffect(() => {
-    if (hasStarted) {
-      handleReset();
-    }
-    // Reset when sidebar context changes mid-interview
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contextKey]);
-
   const handleSend = () => {
     if (!currentQuestion || isSynthesizing) return;
 
@@ -423,6 +537,7 @@ export function GuidedReviewWizard({
     }
 
     setErrorMessage("");
+    questionsLockedRef.current = true;
     setMessages((prev) => [
       ...prev,
       { role: "user", content: trimmed || "(No answer provided)" },
@@ -442,6 +557,16 @@ export function GuidedReviewWizard({
       setAnswers(updatedAnswers);
       syncField(activeFollowUp.storeInField, merged);
       setCompletedFollowUpKeys((prev) => new Set(prev).add(activeFollowUp.followUpKey));
+      setFollowUpTranscript((prev) => [
+        ...prev,
+        {
+          questionId: activeFollowUp.id,
+          category: activeFollowUp.category,
+          question: activeFollowUp.question,
+          answer: trimmed,
+          skipped: false,
+        },
+      ]);
       setActiveFollowUp(null);
 
       appendAssistantMessages([
@@ -473,10 +598,21 @@ export function GuidedReviewWizard({
 
     setErrorMessage("");
     setInputValue("");
+    questionsLockedRef.current = true;
     setMessages((prev) => [...prev, { role: "user", content: "Skipped", skipped: true }]);
 
     if (activeFollowUp) {
       setCompletedFollowUpKeys((prev) => new Set(prev).add(activeFollowUp.followUpKey));
+      setFollowUpTranscript((prev) => [
+        ...prev,
+        {
+          questionId: activeFollowUp.id,
+          category: activeFollowUp.category,
+          question: activeFollowUp.question,
+          answer: "",
+          skipped: true,
+        },
+      ]);
       setActiveFollowUp(null);
       appendAssistantMessages([{ content: "No problem — moving on.", isAcknowledgment: true }]);
       advanceToNextMainQuestion(answers);
@@ -526,6 +662,7 @@ export function GuidedReviewWizard({
           questions,
           answers: finalAnswers,
           fundingPrograms,
+          followUpTranscript,
         }),
       });
       const data = await response.json();

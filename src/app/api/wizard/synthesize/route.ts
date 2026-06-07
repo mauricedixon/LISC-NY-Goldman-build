@@ -6,35 +6,14 @@ import type { DealStringFieldKey } from "@/lib/wizard-form-sync";
 import { buildDealSummary, type DealFormData } from "@/types/deal";
 import type { WizardAnswer, WizardQuestion, AnalysisResult } from "@/types/wizard";
 import { ANALYSIS_JSON_SCHEMA, ANALYSIS_FIELD_GUIDANCE } from "@/lib/analysis-prompt-schema";
+import {
+  buildInterviewTranscript,
+  type FollowUpTranscriptEntry,
+} from "@/lib/wizard-interview-transcript";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
-
-function buildInterviewSummary(
-  loanType: string,
-  questions: WizardQuestion[],
-  answers: WizardAnswer[]
-): string {
-  const answerMap = new Map(answers.map((a) => [a.questionId, a]));
-  const lines = [
-    "GUIDED INTERVIEW RESPONSES",
-    `Loan Type: ${loanType}`,
-    "",
-  ];
-
-  for (const q of questions) {
-    const answer = answerMap.get(q.id);
-    const value = answer?.skipped
-      ? "[Skipped]"
-      : answer?.value?.trim() || "[Not provided]";
-    lines.push(`Q (${q.category}): ${q.question}`);
-    lines.push(`A: ${value}`);
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
 
 function answersToFormData(
   loanType: string,
@@ -68,13 +47,15 @@ function answersToFormData(
 
 export async function POST(request: NextRequest) {
   try {
-    const { loanType, agencies, questions, answers, fundingPrograms } = await request.json() as {
-      loanType: string;
-      agencies: string[];
-      questions: WizardQuestion[];
-      answers: WizardAnswer[];
-      fundingPrograms?: string[];
-    };
+    const { loanType, agencies, questions, answers, fundingPrograms, followUpTranscript } =
+      await request.json() as {
+        loanType: string;
+        agencies: string[];
+        questions: WizardQuestion[];
+        answers: WizardAnswer[];
+        fundingPrograms?: string[];
+        followUpTranscript?: FollowUpTranscriptEntry[];
+      };
 
     if (!loanType || !agencies?.length) {
       return NextResponse.json(
@@ -92,7 +73,13 @@ export async function POST(request: NextRequest) {
       formData.fundingPrograms = fundingPrograms;
     }
     const dealSummary = buildDealSummary(formData);
-    const interviewSummary = buildInterviewSummary(loanType, questions, answers ?? []);
+    const interviewSummary = buildInterviewTranscript(
+      loanType,
+      fundingPrograms,
+      questions,
+      answers ?? [],
+      followUpTranscript ?? []
+    );
 
     const queryText = `${dealSummary}\n\n${interviewSummary}`;
     const { contextText } = await retrieveRulebookContext(queryText, agencies, 10);
