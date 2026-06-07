@@ -107,8 +107,34 @@ export function GuidedReviewWizard({
   const accent = getAccentStyle(selectedAgencies);
   const mainQuestion = questions[currentIndex];
   const currentQuestion = activeFollowUp ?? mainQuestion;
-  const progress =
-    questions.length > 0 ? ((currentIndex + 1) / questions.length) * 100 : 0;
+  const mainQuestionIds = useMemo(
+    () => new Set(questions.map((q) => q.id)),
+    [questions]
+  );
+  const { mainAnsweredCount, followUpAnsweredCount } = useMemo(() => {
+    let main = 0;
+    let followUp = 0;
+    for (const a of answers) {
+      if (a.skipped || !a.value.trim()) continue;
+      if (mainQuestionIds.has(a.questionId)) main++;
+      else followUp++;
+    }
+    return { mainAnsweredCount: main, followUpAnsweredCount: followUp };
+  }, [answers, mainQuestionIds]);
+  const completionSummary = useMemo(() => {
+    const base = `${mainAnsweredCount} of ${questions.length} questions answered`;
+    if (followUpAnsweredCount === 0) return base;
+    const suffix =
+      followUpAnsweredCount === 1
+        ? "1 follow-up"
+        : `${followUpAnsweredCount} follow-ups`;
+    return `${base} · ${suffix}`;
+  }, [mainAnsweredCount, followUpAnsweredCount, questions.length]);
+  const progress = isComplete
+    ? 100
+    : questions.length > 0
+      ? ((currentIndex + 1) / questions.length) * 100
+      : 0;
 
   const syncField = (field: string, value: string) => {
     onDealSync?.(field as DealFieldKey, value);
@@ -572,52 +598,49 @@ export function GuidedReviewWizard({
     );
   }
 
-  if (isComplete) {
-    return (
-      <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-            <p className="text-sm font-medium text-emerald-800">
-              Guided review complete — {answers.filter((a) => !a.skipped && a.value).length} of{" "}
-              {questions.length} questions answered.
-            </p>
-          </div>
-          <button
-            onClick={handleReset}
-            className="text-xs text-emerald-700 hover:text-emerald-900 font-medium"
-          >
-          Start over
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-4xl mx-auto flex flex-col bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden min-h-[520px]">
-        <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
+        <div
+          className={`px-6 py-4 border-b ${
+            isComplete
+              ? "border-emerald-200 bg-gradient-to-r from-emerald-50 to-white"
+              : "border-slate-100 bg-gradient-to-r from-slate-50 to-white"
+          }`}
+        >
           <div className="flex items-center justify-between gap-4">
             <div>
               <h3 className="font-semibold text-slate-800">Guided Review</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Question {currentIndex + 1} of {questions.length}
-                {activeFollowUp && (
-                  <span className="ml-2 text-brand">· follow-up</span>
-                )}
-                {isEnriching && !enrichedApplied && (
-                  <span className="ml-2 text-brand">· tailoring questions to rulebooks...</span>
-                )}
-              </p>
+              {isComplete ? (
+                <p className="text-xs text-emerald-700 mt-0.5 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  Complete — {completionSummary}
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Question {currentIndex + 1} of {questions.length}
+                  {activeFollowUp && (
+                    <span className="ml-2 text-brand">· follow-up</span>
+                  )}
+                  {isEnriching && !enrichedApplied && (
+                    <span className="ml-2 text-brand">· tailoring questions to rulebooks...</span>
+                  )}
+                </p>
+              )}
             </div>
             <button
               onClick={handleReset}
-              className="text-xs text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+              className={`text-xs transition-colors shrink-0 ${
+                isComplete
+                  ? "text-emerald-700 hover:text-emerald-900 font-medium"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
             >
-              Cancel
+              {isComplete ? "Start over" : "Cancel"}
             </button>
           </div>
           <div className="h-1 bg-slate-100 rounded-full overflow-hidden mt-3">
             <div
-              className={`h-full ${accent.progress} rounded-full transition-all duration-500 ease-out`}
+              className={`h-full ${isComplete ? "bg-emerald-500" : accent.progress} rounded-full transition-all duration-500 ease-out`}
               style={{ width: `${progress}%` }}
             />
           </div>
@@ -707,7 +730,15 @@ export function GuidedReviewWizard({
           <div ref={messagesEndRef} />
         </div>
 
-        {!isSynthesizing && currentQuestion && (
+        {isComplete && (
+          <div className="p-4 border-t border-emerald-100 bg-emerald-50/50">
+            <p className="text-xs text-emerald-800 text-center">
+              Conversation saved below — deal snapshot is in the results section.
+            </p>
+          </div>
+        )}
+
+        {!isComplete && !isSynthesizing && currentQuestion && (
           <div className="p-4 border-t border-slate-100 bg-white space-y-3">
             {currentQuestion.inputType === "select" ? (
               <select

@@ -27,7 +27,6 @@ interface SidebarProps {
   onLoanTypeChange: (value: LoanType) => void;
   fundingPrograms: string[];
   onToggleFundingProgram: (program: string) => void;
-  rulebookSuggestHint?: string | null;
 }
 
 export function Sidebar({
@@ -37,7 +36,6 @@ export function Sidebar({
   onLoanTypeChange,
   fundingPrograms,
   onToggleFundingProgram,
-  rulebookSuggestHint,
 }: SidebarProps) {
   const selected = agencies.filter((a) => a.checked);
   const selectedCount = selected.length;
@@ -128,11 +126,6 @@ export function Sidebar({
             </span>
           </div>
           <p className="text-xs text-slate-500">Which agency rulebooks constrain AI search.</p>
-          {rulebookSuggestHint && (
-            <p className="text-[11px] text-emerald-300/90 bg-emerald-950/30 border border-emerald-800/40 rounded-lg px-2.5 py-2 leading-snug">
-              {rulebookSuggestHint}
-            </p>
-          )}
 
           <div className="space-y-1">
             {agencies.map((agency) => {
