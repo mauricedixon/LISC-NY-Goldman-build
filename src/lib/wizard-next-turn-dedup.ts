@@ -16,6 +16,22 @@ const RULE_TOPIC_PATTERNS = [
   /ami band breakdown/i,
 ];
 
+const LIHTC_SETASIDE_PATTERN = /\b(20\/50|40\/60|80\/\d+|60%\s*ami|50%\s*ami)/i;
+
+export interface ClarificationDedupContext {
+  remainingQuestionIds?: string[];
+  questions?: WizardQuestion[];
+}
+
+function remainingIncludesField(
+  field: string,
+  ctx: ClarificationDedupContext
+): boolean {
+  const ids = ctx.remainingQuestionIds ?? [];
+  const questions = ctx.questions ?? [];
+  return ids.some((id) => questions.find((q) => q.id === id)?.field === field);
+}
+
 /** Clarifications worth keeping even when a rule follow-up is queued. */
 export function isHighValueClarification(
   triggerQuestion: WizardQuestion,
@@ -51,7 +67,8 @@ export function shouldSuppressLlmClarification(
   triggerQuestion: WizardQuestion,
   answerValue: string,
   ruleFollowUp: FollowUpQuestion | null,
-  clarification: ConversationClarification | undefined
+  clarification: ConversationClarification | undefined,
+  ctx: ClarificationDedupContext = {}
 ): boolean {
   if (!clarification) return true;
   if (isHighValueClarification(triggerQuestion, answerValue)) return false;
@@ -72,6 +89,36 @@ export function shouldSuppressLlmClarification(
     return true;
   }
 
+  if (
+    /total\s+(number\s+of\s+)?units|how\s+many\s+units/i.test(clarifyText) &&
+    remainingIncludesField("totalUnits", ctx)
+  ) {
+    return true;
+  }
+
+  if (
+    /bedroom\s+mix|studio|1\s*br|2\s*br/i.test(clarifyText) &&
+    (LIHTC_SETASIDE_PATTERN.test(answerValue) || LIHTC_SETASIDE_PATTERN.test(clarifyText))
+  ) {
+    return true;
+  }
+
+  if (
+    /per[-\s]?unit/i.test(clarifyText) &&
+    triggerQuestion.field === "requestedLoanAmount" &&
+    remainingIncludesField("totalUnits", ctx)
+  ) {
+    return true;
+  }
+
+  if (
+    /per[-\s]?unit/i.test(clarifyText) &&
+    triggerQuestion.field === "requestedLoanAmount" &&
+    /\$\d|million|loan/i.test(answerValue)
+  ) {
+    return true;
+  }
+
   if (!ruleFollowUp) return false;
 
   if (RULE_TOPIC_PATTERNS.some((pattern) => pattern.test(clarifyText))) {
@@ -88,4 +135,20 @@ export function shouldSuppressLlmClarification(
   }
 
   return false;
+}
+
+/** When both clarification and a rule follow-up are available, prefer the rule follow-up. */
+export function shouldPreferRuleFollowUpOverClarification(
+  triggerQuestion: WizardQuestion,
+  answerValue: string,
+  ruleFollowUp: FollowUpQuestion | null,
+  clarification: ConversationClarification | undefined,
+  ctx: ClarificationDedupContext = {}
+): boolean {
+  if (!ruleFollowUp || !clarification) return false;
+  if (isHighValueClarification(triggerQuestion, answerValue)) return false;
+  if (shouldSuppressLlmClarification(triggerQuestion, answerValue, ruleFollowUp, clarification, ctx)) {
+    return true;
+  }
+  return true;
 }

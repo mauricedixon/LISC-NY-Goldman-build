@@ -152,6 +152,11 @@ export async function POST(request: NextRequest) {
         conversationContext
       );
 
+      const remainingForDedup =
+        body.remainingQuestionIds?.length ?
+          body.remainingQuestionIds.filter((id) => id !== body.triggerQuestion.id)
+        : [];
+
       if (
         llm.clarification &&
         !completedKeys.has(llm.clarification.clarificationKey) &&
@@ -159,7 +164,8 @@ export async function POST(request: NextRequest) {
           body.triggerQuestion,
           body.answerValue,
           ruleFollowUp,
-          llm.clarification
+          llm.clarification,
+          { remainingQuestionIds: remainingForDedup, questions: body.questions }
         )
       ) {
         clarification = llm.clarification;

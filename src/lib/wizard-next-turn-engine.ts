@@ -1,4 +1,9 @@
-import { getFollowUpKeysSatisfiedByAnswers } from "@/lib/wizard-answer-informed-skip";
+import {
+  buildInformedSkipAcknowledgment,
+  getFollowUpKeysSatisfiedByAnswers,
+  isFieldSatisfiedByPriorAnswers,
+} from "@/lib/wizard-answer-informed-skip";
+import { shouldPreferRuleFollowUpOverClarification } from "@/lib/wizard-next-turn-dedup";
 import {
   buildAcknowledgment,
   buildCategoryTransition,
@@ -131,7 +136,9 @@ function advanceToNextMain(
 
   for (const skippedId of advanced.skippedQuestionIds) {
     const skippedQ = input.questions.find((q) => q.id === skippedId);
-    if (skippedQ && isRedundantLoanTypeQuestion(skippedQ, input.loanType)) {
+    if (!skippedQ) continue;
+
+    if (isRedundantLoanTypeQuestion(skippedQ, input.loanType)) {
       prefaceMessages.push({
         content: buildAcknowledgment(
           skippedQ,
@@ -159,6 +166,23 @@ function advanceToNextMain(
           skippedQuestionIds: allSkipped,
         };
       }
+      continue;
+    }
+
+    const informed = isFieldSatisfiedByPriorAnswers(
+      skippedQ,
+      workingAnswers,
+      input.questions,
+      input.fundingPrograms
+    );
+    if (informed.skip) {
+      const inferred =
+        informed.inferredValue ??
+        workingAnswers.find((a) => a.questionId === skippedId)?.value;
+      prefaceMessages.push({
+        content: buildInformedSkipAcknowledgment(skippedQ, inferred),
+        isAcknowledgment: true,
+      });
     }
   }
 
@@ -202,6 +226,29 @@ export function resolveNextTurnAfterMainAnswer(
   remaining = removeQuestionFromRemaining(remaining, input.triggerQuestion.id);
 
   const baseWithRemaining = { ...input, remainingQuestionIds: remaining };
+  const answerValue =
+    input.updatedAnswers.find((a) => a.questionId === input.triggerQuestion.id)?.value ?? "";
+
+  if (
+    input.clarification &&
+    ruleFollowUp &&
+    shouldPreferRuleFollowUpOverClarification(
+      input.triggerQuestion,
+      answerValue,
+      ruleFollowUp,
+      input.clarification,
+      { remainingQuestionIds: remaining, questions: input.questions }
+    )
+  ) {
+    return {
+      acknowledgment: input.acknowledgment,
+      nextAction: "follow_up",
+      followUp: { ...ruleFollowUp, source: "rule" },
+      workingAnswers: input.updatedAnswers,
+      remainingQuestionIds: remaining,
+      nextIndex: input.currentIndex,
+    };
+  }
 
   if (input.clarification) {
     return {
