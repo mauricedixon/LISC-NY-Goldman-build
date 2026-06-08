@@ -1,3 +1,4 @@
+import { isEnrichedQuestionRedundant } from "@/lib/wizard-enriched-question-runtime";
 import { getAnswerByField } from "@/lib/wizard-conversation";
 import type { WizardAnswer, WizardQuestion } from "@/types/wizard";
 
@@ -133,6 +134,14 @@ export function isFieldSatisfiedByPriorAnswers(
       };
     }
   }
+
+  const enriched = isEnrichedQuestionRedundant(
+    question,
+    answers,
+    allQuestions,
+    fundingPrograms
+  );
+  if (enriched.skip) return enriched;
 
   return { skip: false };
 }

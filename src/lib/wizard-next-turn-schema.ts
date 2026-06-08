@@ -49,6 +49,8 @@ export interface NextTurnSuccess {
   /** Auto-skip acks emitted while advancing past redundant loan-type questions. */
   prefaceMessages?: NextTurnPrefaceMessage[];
   clarification?: ConversationClarification;
+  /** Clarification deferred because a rule follow-up took priority (tier 2.1). */
+  deferredClarification?: ConversationClarification;
   followUp?: FollowUpQuestion;
   mainQuestion?: WizardQuestion;
   categoryTransition?: string;

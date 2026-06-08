@@ -244,6 +244,7 @@ export function resolveNextTurnAfterMainAnswer(
       acknowledgment: input.acknowledgment,
       nextAction: "follow_up",
       followUp: { ...ruleFollowUp, source: "rule" },
+      deferredClarification: input.clarification,
       workingAnswers: input.updatedAnswers,
       remainingQuestionIds: remaining,
       nextIndex: input.currentIndex,

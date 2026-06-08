@@ -3,6 +3,7 @@ import { generateConversationAck } from "@/lib/wizard-conversation-llm";
 import { isWizardLlmConversationEnabledServer } from "@/lib/wizard-conversation-config";
 import { buildAcknowledgment } from "@/lib/wizard-conversation";
 import { isWizardDynamicInterviewEnabledServer } from "@/lib/wizard-dynamic-interview-config";
+import { buildOpenGapsSummary } from "@/lib/wizard-deal-state";
 import { shouldSuppressLlmClarification } from "@/lib/wizard-next-turn-dedup";
 import {
   buildFollowUpTurnAcknowledgment,
@@ -100,10 +101,20 @@ export async function POST(request: NextRequest) {
     let claudeMs = 0;
     let ragMs = 0;
 
+    const remainingForDedup =
+      body.remainingQuestionIds?.length ?
+        body.remainingQuestionIds.filter((id) => id !== body.triggerQuestion.id)
+      : [];
+
     const extraInstructions = [
       "If a rule-based follow-up will ask about LIHTC set-asides, HPD set-asides, HCR rent rules, AMI bands, construction phasing, or leverage, do NOT clarify those topics.",
       "Only reference facts the user has already stated in answers — do not invent set-asides or program details.",
     ];
+
+    const openGaps = buildOpenGapsSummary(remainingForDedup, body.questions);
+    if (openGaps) {
+      extraInstructions.push(openGaps);
+    }
 
     if (
       dynamicEnabled &&
@@ -151,11 +162,6 @@ export async function POST(request: NextRequest) {
         completedKeys,
         conversationContext
       );
-
-      const remainingForDedup =
-        body.remainingQuestionIds?.length ?
-          body.remainingQuestionIds.filter((id) => id !== body.triggerQuestion.id)
-        : [];
 
       if (
         llm.clarification &&

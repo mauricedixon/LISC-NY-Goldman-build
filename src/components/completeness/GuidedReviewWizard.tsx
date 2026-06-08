@@ -40,8 +40,11 @@ import {
 import {
   buildGuideContextForSynthesize,
   buildGuideOpeningSuffix,
+  buildGuideSummaryForOpening,
   resolveTermSheetGuide,
 } from "@/lib/term-sheet-guide-bridge";
+import type { ConversationClarification } from "@/lib/wizard-conversation-schema";
+import { shouldSuppressLlmClarification } from "@/lib/wizard-next-turn-dedup";
 import { isWizardLlmConversationEnabled } from "@/lib/wizard-conversation-config";
 import { isWizardLlmOpeningEnabled } from "@/lib/wizard-llm-opening-config";
 import { isWizardDynamicInterviewEnabled } from "@/lib/wizard-dynamic-interview-config";
@@ -150,6 +153,9 @@ export function GuidedReviewWizard({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const questionsLockedRef = useRef(false);
+  const deferredClarificationsRef = useRef<
+    { clarification: ConversationClarification; mainQuestion: WizardQuestion }[]
+  >([]);
   const initRemainingQueue = useCallback(
     (qs: WizardQuestion[], ans: WizardAnswer[]) => {
       if (!isWizardNextTurnEnabled()) return [];
@@ -357,6 +363,7 @@ export function GuidedReviewWizard({
     setActiveFollowUp(null);
     setCompletedFollowUpKeys(new Set());
     setFollowUpTranscript([]);
+    deferredClarificationsRef.current = [];
     questionsLockedRef.current = false;
 
     const cached = getCachedWizardQuestions(
@@ -459,6 +466,9 @@ export function GuidedReviewWizard({
               loanType,
               agencies: selectedAgencies,
               fundingPrograms,
+              termSheetGuideSummary: guide
+                ? buildGuideSummaryForOpening(guide)
+                : undefined,
             }),
           });
           const data = (await res.json()) as { success?: boolean; opening?: string };
@@ -729,6 +739,48 @@ export function GuidedReviewWizard({
     }
   };
 
+  const presentDeferredClarification = (
+    workingAnswers: WizardAnswer[],
+    remainingIds: string[]
+  ): boolean => {
+    while (deferredClarificationsRef.current.length > 0) {
+      const head = deferredClarificationsRef.current[0];
+      const answerValue =
+        getAnswerByField(workingAnswers, questions, head.mainQuestion.field) ?? "";
+
+      if (
+        shouldSuppressLlmClarification(
+          head.mainQuestion,
+          answerValue,
+          null,
+          head.clarification,
+          { remainingQuestionIds: remainingIds, questions }
+        )
+      ) {
+        deferredClarificationsRef.current.shift();
+        continue;
+      }
+
+      deferredClarificationsRef.current.shift();
+      const clarification = clarificationToFollowUp(
+        head.clarification,
+        head.mainQuestion.category
+      );
+      setActiveFollowUp(clarification);
+      setInputValue("");
+      appendAssistantMessages([
+        {
+          content: clarification.question,
+          questionId: clarification.id,
+          helpText: clarification.helpText,
+          category: clarification.category,
+        },
+      ]);
+      return true;
+    }
+    return false;
+  };
+
   const applyNextTurnResult = (
     result: NextTurnSuccess,
     triggerQuestion: WizardQuestion
@@ -743,6 +795,13 @@ export function GuidedReviewWizard({
 
     syncWorkingAnswers(result.workingAnswers);
     setRemainingQuestionIds(result.remainingQuestionIds);
+
+    if (result.deferredClarification) {
+      deferredClarificationsRef.current.push({
+        clarification: result.deferredClarification,
+        mainQuestion: triggerQuestion,
+      });
+    }
 
     if (result.nextAction === "clarification" && result.clarification) {
       if (completedFollowUpKeys.has(result.clarification.clarificationKey)) {
@@ -790,6 +849,15 @@ export function GuidedReviewWizard({
     }
 
     if (result.nextAction === "main_question" && result.mainQuestion) {
+      if (
+        presentDeferredClarification(
+          result.workingAnswers,
+          result.remainingQuestionIds
+        )
+      ) {
+        return;
+      }
+
       setCurrentIndex(result.nextIndex ?? currentIndex + 1);
       setHelpExpanded(false);
       setActiveFollowUp(null);

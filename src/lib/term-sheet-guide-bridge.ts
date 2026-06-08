@@ -27,6 +27,25 @@ export function resolveTermSheetGuide(
   return null;
 }
 
+/** Plain-text summary for LLM opening / next-turn prompts. */
+export function buildGuideSummaryForOpening(guide: TermSheetGuideResult): string {
+  const { essential } = countItemsByTier(guide.sections);
+  const parts = [guide.summary.trim()];
+  if (essential > 0) {
+    parts.push(
+      `Term sheet guide flagged ${essential} essential checklist item${essential === 1 ? "" : "s"}.`
+    );
+  }
+  if (guide.keyThresholds.length > 0) {
+    const thresholds = guide.keyThresholds
+      .slice(0, 4)
+      .map((row) => `${row.label}: ${row.value}`)
+      .join("; ");
+    parts.push(`Key thresholds: ${thresholds}`);
+  }
+  return parts.join(" ");
+}
+
 /** Optional suffix for Guided Review opening when a term sheet guide is cached. */
 export function buildGuideOpeningSuffix(guide: TermSheetGuideResult): string {
   const { essential } = countItemsByTier(guide.sections);

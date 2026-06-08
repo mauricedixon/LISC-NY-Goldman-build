@@ -2,6 +2,8 @@ import {
   getFollowUpKeysSatisfiedByAnswers,
   isFieldSatisfiedByPriorAnswers,
 } from "../src/lib/wizard-answer-informed-skip";
+import { isEnrichedQuestionRedundant } from "../src/lib/wizard-enriched-question-runtime";
+import { buildOpenGapsSummary } from "../src/lib/wizard-deal-state";
 import {
   shouldPreferRuleFollowUpOverClarification,
   shouldSuppressLlmClarification,
@@ -138,6 +140,53 @@ assert(
     questions as import("@/types/wizard").WizardQuestion[],
     ["LIHTC"]
   ).skip
+);
+
+const enrichedNotesQ = {
+  id: "bedroom_mix",
+  field: "additionalNotes",
+  category: "Unit Mix",
+  question: "What is the proposed bedroom mix — studios, 1BR, 2BR?",
+  helpText: "Unit mix detail",
+  inputType: "textarea" as const,
+  required: false,
+};
+
+assert(
+  "enriched runtime skips bedroom mix when set-aside in corpus",
+  isEnrichedQuestionRedundant(
+    enrichedNotesQ,
+    answersWithSetAside,
+    [...questions, enrichedNotesQ] as import("@/types/wizard").WizardQuestion[],
+    ["LIHTC", "HPD"]
+  ).skip
+);
+
+assert(
+  "open gaps summary lists queued fields",
+  Boolean(
+    buildOpenGapsSummary(
+      ["total_units", "total_development_cost"],
+      [
+        {
+          id: "total_units",
+          field: "totalUnits",
+          category: "Unit Mix",
+          question: "Units?",
+          inputType: "number",
+          required: true,
+        },
+        {
+          id: "total_development_cost",
+          field: "totalDevelopmentCost",
+          category: "Financials",
+          question: "TDC?",
+          inputType: "number",
+          required: true,
+        },
+      ]
+    )?.includes("total units")
+  )
 );
 
 if (failed > 0) {
