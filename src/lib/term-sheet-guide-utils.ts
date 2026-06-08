@@ -58,36 +58,3 @@ export function normalizeGuideSections(
     })),
   }));
 }
-
-/** Merge essential and extended section lists by section title. */
-export function mergeGuideSections(
-  essentialSections: TermSheetGuideSection[],
-  extendedSections: TermSheetGuideSection[]
-): TermSheetGuideSection[] {
-  const order: string[] = [];
-  const byTitle = new Map<string, TermSheetChecklistItem[]>();
-
-  const append = (sections: TermSheetGuideSection[]) => {
-    for (const section of sections) {
-      if (!byTitle.has(section.title)) {
-        order.push(section.title);
-        byTitle.set(section.title, []);
-      }
-      byTitle.get(section.title)!.push(...section.items);
-    }
-  };
-
-  append(essentialSections);
-  append(extendedSections);
-
-  return order
-    .map((title) => ({
-      title,
-      items: byTitle.get(title) ?? [],
-    }))
-    .filter((section) => section.items.length > 0);
-}
-
-export function hasExtendedGuideItems(sections: TermSheetGuideSection[]): boolean {
-  return countItemsByTier(sections).extended > 0;
-}
