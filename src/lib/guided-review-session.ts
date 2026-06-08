@@ -4,7 +4,7 @@ import type { TermSheetGuideResult } from "@/types/term-sheet-guide";
 import type { AnalysisResult, WizardAnswer, WizardQuestion } from "@/types/wizard";
 
 const STORAGE_KEY = "lisc-guided-review-session";
-export const GUIDED_REVIEW_SESSION_VERSION = 2;
+export const GUIDED_REVIEW_SESSION_VERSION = 3;
 
 export interface GuidedReviewChatMessage {
   role: "assistant" | "user";
@@ -34,6 +34,8 @@ export interface GuidedReviewSession {
   analysisBaseline?: string | null;
   termSheetGuideKey?: string;
   termSheetGuide?: TermSheetGuideResult;
+  /** Phase 2c — server-driven question queue (ids). */
+  remainingQuestionIds?: string[];
 }
 
 export function loadGuidedReviewSession(): GuidedReviewSession | null {

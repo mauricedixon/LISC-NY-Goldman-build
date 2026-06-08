@@ -1,32 +1,47 @@
 import {
   buildAcknowledgment,
   buildCategoryTransition,
+  buildFollowUpAcknowledgment,
   getFollowUpQuestion,
   isRedundantLoanTypeQuestion,
   type FollowUpQuestion,
   type WizardConversationContext,
 } from "@/lib/wizard-conversation";
+import {
+  advanceQuestionQueue,
+  buildRemainingQuestionIds,
+  removeQuestionFromRemaining,
+} from "@/lib/wizard-question-order";
 import type { WizardAnswer, WizardQuestion } from "@/types/wizard";
 import type {
   NextTurnPrefaceMessage,
   NextTurnSuccess,
 } from "@/lib/wizard-next-turn-schema";
 
-export interface ResolveNextTurnInput {
+export interface ResolveNextTurnBase {
   loanType: string;
   fundingPrograms: string[];
+  questions: WizardQuestion[];
+  updatedAnswers: WizardAnswer[];
+  completedFollowUpKeys: Set<string>;
+  remainingQuestionIds: string[];
+  dynamicEnabled: boolean;
+  acknowledgment: string;
+}
+
+export interface ResolveNextTurnAfterMainInput extends ResolveNextTurnBase {
   currentIndex: number;
   triggerQuestion: WizardQuestion;
-  updatedAnswers: WizardAnswer[];
-  questions: WizardQuestion[];
-  completedFollowUpKeys: Set<string>;
-  acknowledgment: string;
   clarification?: {
     question: string;
     helpText?: string;
     clarificationKey: string;
     storeInField: import("@/lib/wizard-form-sync").DealFieldKey;
   };
+}
+
+export interface ResolveNextTurnAfterFollowUpInput extends ResolveNextTurnBase {
+  mainQuestion: WizardQuestion;
 }
 
 function conversationContext(
@@ -36,16 +51,30 @@ function conversationContext(
   return { loanType, fundingPrograms };
 }
 
-function computeRuleFollowUp(
-  input: ResolveNextTurnInput
+function ensureRemainingIds(
+  input: ResolveNextTurnBase
+): string[] {
+  if (input.remainingQuestionIds.length > 0) {
+    return [...input.remainingQuestionIds];
+  }
+  return buildRemainingQuestionIds({
+    questions: input.questions,
+    loanType: input.loanType,
+    fundingPrograms: input.fundingPrograms,
+    answers: input.updatedAnswers,
+    dynamicEnabled: input.dynamicEnabled,
+  });
+}
+
+function computeRuleFollowUpOnField(
+  question: WizardQuestion,
+  answerValue: string,
+  input: ResolveNextTurnBase
 ): FollowUpQuestion | null {
   const ctx = conversationContext(input.loanType, input.fundingPrograms);
-  const mainAnswer = input.updatedAnswers.find(
-    (a) => a.questionId === input.triggerQuestion.id
-  );
   return getFollowUpQuestion(
-    input.triggerQuestion,
-    mainAnswer?.value ?? "",
+    question,
+    answerValue,
     input.updatedAnswers,
     input.questions,
     input.completedFollowUpKeys,
@@ -53,90 +82,111 @@ function computeRuleFollowUp(
   );
 }
 
-function computeAdvanceAfterTrigger(
-  input: ResolveNextTurnInput
+function advanceToNextMain(
+  input: ResolveNextTurnBase,
+  prevCategory?: string
 ): Pick<
   NextTurnSuccess,
-  "nextAction" | "prefaceMessages" | "followUp" | "mainQuestion" | "categoryTransition" | "nextIndex" | "workingAnswers"
+  | "nextAction"
+  | "prefaceMessages"
+  | "followUp"
+  | "mainQuestion"
+  | "categoryTransition"
+  | "nextIndex"
+  | "workingAnswers"
+  | "remainingQuestionIds"
+  | "skippedQuestionIds"
 > {
   const ctx = conversationContext(input.loanType, input.fundingPrograms);
   const prefaceMessages: NextTurnPrefaceMessage[] = [];
-  let nextIndex = input.currentIndex + 1;
+  let remaining = ensureRemainingIds(input);
   let workingAnswers = [...input.updatedAnswers];
+  const allSkipped: string[] = [];
 
-  const prevCategory = input.questions[input.currentIndex]?.category;
+  const advanced = advanceQuestionQueue(
+    remaining,
+    input.questions,
+    workingAnswers,
+    input.loanType,
+    ctx
+  );
+  remaining = advanced.remainingQuestionIds;
+  workingAnswers = advanced.workingAnswers;
+  allSkipped.push(...advanced.skippedQuestionIds);
 
-  while (
-    nextIndex < input.questions.length &&
-    isRedundantLoanTypeQuestion(input.questions[nextIndex], input.loanType)
-  ) {
-    const skippedQ = input.questions[nextIndex];
-    workingAnswers = [
-      ...workingAnswers.filter((a) => a.questionId !== skippedQ.id),
-      { questionId: skippedQ.id, value: input.loanType, skipped: false },
-    ];
+  for (const skippedId of advanced.skippedQuestionIds) {
+    const skippedQ = input.questions.find((q) => q.id === skippedId);
+    if (skippedQ && isRedundantLoanTypeQuestion(skippedQ, input.loanType)) {
+      prefaceMessages.push({
+        content: buildAcknowledgment(
+          skippedQ,
+          input.loanType,
+          workingAnswers,
+          input.questions,
+          ctx
+        ),
+        isAcknowledgment: true,
+      });
 
-    prefaceMessages.push({
-      content: buildAcknowledgment(
+      const followUp = computeRuleFollowUpOnField(
         skippedQ,
         input.loanType,
-        workingAnswers,
-        input.questions,
-        ctx
-      ),
-      isAcknowledgment: true,
-    });
-
-    const followUp = getFollowUpQuestion(
-      skippedQ,
-      input.loanType,
-      workingAnswers,
-      input.questions,
-      input.completedFollowUpKeys,
-      ctx
-    );
-
-    if (followUp) {
-      return {
-        nextAction: "follow_up",
-        prefaceMessages,
-        followUp: { ...followUp, source: "rule" },
-        nextIndex,
-        workingAnswers,
-      };
+        { ...input, updatedAnswers: workingAnswers, remainingQuestionIds: remaining }
+      );
+      if (followUp) {
+        return {
+          nextAction: "follow_up",
+          prefaceMessages,
+          followUp: { ...followUp, source: "rule" },
+          nextIndex: input.questions.findIndex((q) => q.id === skippedId),
+          workingAnswers,
+          remainingQuestionIds: remaining,
+          skippedQuestionIds: allSkipped,
+        };
+      }
     }
-
-    nextIndex++;
   }
 
-  if (nextIndex >= input.questions.length) {
+  if (!advanced.nextQuestion) {
     return {
       nextAction: "finish",
       prefaceMessages,
       workingAnswers,
+      remainingQuestionIds: [],
+      skippedQuestionIds: allSkipped,
     };
   }
 
-  const nextQuestion = input.questions[nextIndex];
   const categoryTransition = buildCategoryTransition(
     prevCategory,
-    nextQuestion.category
+    advanced.nextQuestion.category
   );
 
   return {
     nextAction: "main_question",
     prefaceMessages,
-    mainQuestion: nextQuestion,
+    mainQuestion: advanced.nextQuestion,
     categoryTransition: categoryTransition || undefined,
-    nextIndex,
+    nextIndex: advanced.nextIndex,
     workingAnswers,
+    remainingQuestionIds: remaining,
+    skippedQuestionIds: allSkipped,
   };
 }
 
 export function resolveNextTurnAfterMainAnswer(
-  input: ResolveNextTurnInput
+  input: ResolveNextTurnAfterMainInput
 ): Omit<NextTurnSuccess, "success"> {
-  const ruleFollowUp = computeRuleFollowUp(input);
+  const ruleFollowUp = computeRuleFollowUpOnField(
+    input.triggerQuestion,
+    input.updatedAnswers.find((a) => a.questionId === input.triggerQuestion.id)?.value ?? "",
+    input
+  );
+
+  let remaining = ensureRemainingIds(input);
+  remaining = removeQuestionFromRemaining(remaining, input.triggerQuestion.id);
+
+  const baseWithRemaining = { ...input, remainingQuestionIds: remaining };
 
   if (input.clarification) {
     return {
@@ -144,6 +194,7 @@ export function resolveNextTurnAfterMainAnswer(
       nextAction: "clarification",
       clarification: input.clarification,
       workingAnswers: input.updatedAnswers,
+      remainingQuestionIds: remaining,
     };
   }
 
@@ -153,12 +204,51 @@ export function resolveNextTurnAfterMainAnswer(
       nextAction: "follow_up",
       followUp: { ...ruleFollowUp, source: "rule" },
       workingAnswers: input.updatedAnswers,
+      remainingQuestionIds: remaining,
+      nextIndex: input.currentIndex,
     };
   }
 
-  const advance = computeAdvanceAfterTrigger(input);
+  const prevCategory = input.questions[input.currentIndex]?.category;
+  const advance = advanceToNextMain(baseWithRemaining, prevCategory);
   return {
     acknowledgment: input.acknowledgment,
     ...advance,
   };
+}
+
+export function resolveNextTurnAfterFollowUpAnswer(
+  input: ResolveNextTurnAfterFollowUpInput
+): Omit<NextTurnSuccess, "success"> {
+  const mainAnswer =
+    input.updatedAnswers.find((a) => a.questionId === input.mainQuestion.id)?.value ?? "";
+
+  const chainedFollowUp = computeRuleFollowUpOnField(
+    input.mainQuestion,
+    mainAnswer,
+    input
+  );
+
+  if (chainedFollowUp) {
+    return {
+      acknowledgment: input.acknowledgment,
+      nextAction: "follow_up",
+      followUp: { ...chainedFollowUp, source: "rule" },
+      workingAnswers: input.updatedAnswers,
+      remainingQuestionIds: ensureRemainingIds(input),
+      nextIndex: input.questions.findIndex((q) => q.id === input.mainQuestion.id),
+    };
+  }
+
+  const prevCategory = input.mainQuestion.category;
+  const advance = advanceToNextMain(input, prevCategory);
+  return {
+    acknowledgment: input.acknowledgment,
+    ...advance,
+  };
+}
+
+export function buildFollowUpTurnAcknowledgment(answerValue: string, skipped: boolean): string {
+  if (skipped) return "No problem — moving on.";
+  return buildFollowUpAcknowledgment(answerValue);
 }

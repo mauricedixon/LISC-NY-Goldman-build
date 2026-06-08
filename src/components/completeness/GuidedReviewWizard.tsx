@@ -43,7 +43,9 @@ import {
   resolveTermSheetGuide,
 } from "@/lib/term-sheet-guide-bridge";
 import { isWizardLlmConversationEnabled } from "@/lib/wizard-conversation-config";
+import { isWizardDynamicInterviewEnabled } from "@/lib/wizard-dynamic-interview-config";
 import { isWizardNextTurnEnabled } from "@/lib/wizard-next-turn-config";
+import { buildRemainingQuestionIds } from "@/lib/wizard-question-order";
 import {
   createConversationTurnAbortSignal,
   fetchConversationTurn,
@@ -52,7 +54,7 @@ import {
   createNextTurnAbortSignal,
   fetchNextTurn,
 } from "@/lib/wizard-next-turn-client";
-import type { NextTurnSuccess } from "@/lib/wizard-next-turn-schema";
+import type { NextTurnRequest, NextTurnSuccess } from "@/lib/wizard-next-turn-schema";
 import {
   applyFollowUpAnswer,
   buildAcknowledgment,
@@ -143,9 +145,24 @@ export function GuidedReviewWizard({
     null
   );
   const [resumedContextMismatch, setResumedContextMismatch] = useState(false);
+  const [remainingQuestionIds, setRemainingQuestionIds] = useState<string[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const questionsLockedRef = useRef(false);
+  const initRemainingQueue = useCallback(
+    (qs: WizardQuestion[], ans: WizardAnswer[]) => {
+      if (!isWizardNextTurnEnabled()) return [];
+      return buildRemainingQuestionIds({
+        questions: qs,
+        loanType,
+        fundingPrograms,
+        answers: ans,
+        dynamicEnabled: isWizardDynamicInterviewEnabled(),
+      });
+    },
+    [loanType, fundingPrograms]
+  );
+
   const conversationContext = useMemo(
     () => ({ fundingPrograms, loanType }),
     [fundingPrograms, loanType]
@@ -255,6 +272,7 @@ export function GuidedReviewWizard({
       analysisBaseline: isComplete ? sessionAnalysisBaseline : null,
       termSheetGuideKey: guideKey,
       termSheetGuide: guide ?? undefined,
+      remainingQuestionIds,
     });
   }, [
     hasStarted,
@@ -272,6 +290,7 @@ export function GuidedReviewWizard({
     activeFollowUp,
     sessionAnalysis,
     sessionAnalysisBaseline,
+    remainingQuestionIds,
   ]);
 
   const loadEnrichedQuestionsInBackground = useCallback(
@@ -422,6 +441,7 @@ export function GuidedReviewWizard({
 
     setQuestions(initialQuestions);
     setAnswers(initialAnswers);
+    setRemainingQuestionIds(initRemainingQueue(initialQuestions, initialAnswers));
     setCurrentIndex(startIndex);
     setCompletedFollowUpKeys(initialFollowUpKeys);
     setActiveFollowUp(pendingFollowUp);
@@ -463,6 +483,7 @@ export function GuidedReviewWizard({
     setResumedContextMismatch(false);
     setSessionPromptOpen(false);
     setSavedSession(null);
+    setRemainingQuestionIds([]);
     questionsLockedRef.current = false;
     clearGuidedReviewSession();
     setAnalysisResult(null);
@@ -499,6 +520,10 @@ export function GuidedReviewWizard({
     setSessionAnalysis(savedSession.analysisResult ?? null);
     questionsLockedRef.current = savedSession.questionsLocked;
     setActiveFollowUp(savedSession.activeFollowUp ?? null);
+    setRemainingQuestionIds(
+      savedSession.remainingQuestionIds ??
+        initRemainingQueue(savedSession.questions, savedSession.answers)
+    );
     setInputValue("");
     setErrorMessage("");
     setEnrichedApplied(true);
@@ -688,6 +713,7 @@ export function GuidedReviewWizard({
     ]);
 
     syncWorkingAnswers(result.workingAnswers);
+    setRemainingQuestionIds(result.remainingQuestionIds);
 
     if (result.nextAction === "clarification" && result.clarification) {
       if (completedFollowUpKeys.has(result.clarification.clarificationKey)) {
@@ -795,10 +821,33 @@ export function GuidedReviewWizard({
     advanceToNextMainQuestion(updatedAnswers);
   };
 
+  const invokeNextTurn = async (
+    payload: NextTurnRequest,
+    fallbackTrigger: WizardQuestion
+  ): Promise<boolean> => {
+    setIsGeneratingAck(true);
+    const { signal, cancel } = createNextTurnAbortSignal();
+
+    try {
+      const result = await fetchNextTurn(payload, signal);
+      if (result.success) {
+        applyNextTurnResult(result, fallbackTrigger);
+        return true;
+      }
+    } catch {
+      // fall through to scripted fallback
+    } finally {
+      cancel();
+      setIsGeneratingAck(false);
+    }
+    return false;
+  };
+
   const proceedAfterMainAnswer = async (
     triggerQuestion: WizardQuestion,
     answerValue: string,
-    updatedAnswers: WizardAnswer[]
+    updatedAnswers: WizardAnswer[],
+    skipped = false
   ) => {
     if (!isWizardLlmConversationEnabled() && !isWizardNextTurnEnabled()) {
       appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
@@ -807,27 +856,59 @@ export function GuidedReviewWizard({
     }
 
     if (isWizardNextTurnEnabled()) {
-      setIsGeneratingAck(true);
-      const { signal, cancel } = createNextTurnAbortSignal();
+      const guide = resolveTermSheetGuide(
+        loanType,
+        selectedAgencies,
+        fundingPrograms
+      );
+      const ok = await invokeNextTurn(
+        {
+          loanType,
+          agencies: selectedAgencies,
+          fundingPrograms,
+          currentIndex,
+          triggerQuestion,
+          answerValue,
+          skipped,
+          turnType: "main_answer",
+          questions,
+          answers: updatedAnswers,
+          completedFollowUpKeys: [...completedFollowUpKeys],
+          remainingQuestionIds,
+          termSheetGuideSummary: guide?.summary?.trim(),
+          recentMessages: messages.slice(-6).map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        },
+        triggerQuestion
+      );
+      if (ok) return;
 
+      appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
+      proceedWithRuleBasedFollowUp(triggerQuestion, answerValue, updatedAnswers);
+      return;
+    }
+
+    if (isWizardLlmConversationEnabled()) {
+      setIsGeneratingAck(true);
+      const { signal, cancel } = createConversationTurnAbortSignal();
       try {
         const guide = resolveTermSheetGuide(
           loanType,
           selectedAgencies,
           fundingPrograms
         );
-        const result = await fetchNextTurn(
+        const result = await fetchConversationTurn(
           {
             loanType,
             agencies: selectedAgencies,
             fundingPrograms,
-            currentIndex,
             triggerQuestion,
             answerValue,
-            skipped: false,
+            skipped,
             questions,
             answers: updatedAnswers,
-            completedFollowUpKeys: [...completedFollowUpKeys],
             termSheetGuideSummary: guide?.summary?.trim(),
             recentMessages: messages.slice(-6).map((m) => ({
               role: m.role,
@@ -838,83 +919,120 @@ export function GuidedReviewWizard({
         );
 
         if (result.success) {
-          applyNextTurnResult(result, triggerQuestion);
-          return;
+          appendAssistantMessages([
+            { content: result.acknowledgment, isAcknowledgment: true },
+          ]);
+          if (
+            result.needsClarification &&
+            result.clarification &&
+            !completedFollowUpKeys.has(result.clarification.clarificationKey)
+          ) {
+            const clarification = clarificationToFollowUp(
+              result.clarification,
+              triggerQuestion.category
+            );
+            setActiveFollowUp(clarification);
+            setInputValue("");
+            appendAssistantMessages([
+              {
+                content: clarification.question,
+                questionId: clarification.id,
+                helpText: clarification.helpText,
+                category: clarification.category,
+              },
+            ]);
+            return;
+          }
+        } else {
+          appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
         }
-
-        appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
-        proceedWithRuleBasedFollowUp(triggerQuestion, answerValue, updatedAnswers);
       } catch {
         appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
-        proceedWithRuleBasedFollowUp(triggerQuestion, answerValue, updatedAnswers);
       } finally {
         cancel();
         setIsGeneratingAck(false);
       }
+      proceedWithRuleBasedFollowUp(triggerQuestion, answerValue, updatedAnswers);
       return;
     }
 
-    setIsGeneratingAck(true);
-    const { signal, cancel } = createConversationTurnAbortSignal();
+    appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
+    proceedWithRuleBasedFollowUp(triggerQuestion, answerValue, updatedAnswers);
+  };
 
-    try {
-      const guide = resolveTermSheetGuide(loanType, selectedAgencies, fundingPrograms);
-      const result = await fetchConversationTurn(
-        {
-          loanType,
-          agencies: selectedAgencies,
-          fundingPrograms,
-          triggerQuestion,
-          answerValue,
-          skipped: false,
-          questions,
-          answers: updatedAnswers,
-          termSheetGuideSummary: guide?.summary?.trim(),
-          recentMessages: messages.slice(-6).map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-        },
-        signal
-      );
-
-      if (result.success) {
-        appendAssistantMessages([
-          { content: result.acknowledgment, isAcknowledgment: true },
-        ]);
-
-        if (
-          result.needsClarification &&
-          result.clarification &&
-          !completedFollowUpKeys.has(result.clarification.clarificationKey)
-        ) {
-          const clarification = clarificationToFollowUp(
-            result.clarification,
-            triggerQuestion.category
-          );
-          setActiveFollowUp(clarification);
-          setInputValue("");
-          appendAssistantMessages([
-            {
-              content: clarification.question,
-              questionId: clarification.id,
-              helpText: clarification.helpText,
-              category: clarification.category,
-            },
-          ]);
-          return;
-        }
-      } else {
-        appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
-      }
-    } catch {
-      appendScriptedAcknowledgment(triggerQuestion, answerValue, updatedAnswers);
-    } finally {
-      cancel();
-      setIsGeneratingAck(false);
+  const proceedAfterFollowUpAnswer = async (
+    followUp: FollowUpQuestion,
+    answerValue: string,
+    updatedAnswers: WizardAnswer[],
+    updatedCompletedKeys: Set<string>,
+    skipped = false
+  ) => {
+    if (!mainQuestion) {
+      advanceToNextMainQuestion(updatedAnswers);
+      return;
     }
 
-    proceedWithRuleBasedFollowUp(triggerQuestion, answerValue, updatedAnswers);
+    if (!isWizardNextTurnEnabled()) {
+      appendAssistantMessages([
+        {
+          content: skipped
+            ? "No problem — moving on."
+            : buildFollowUpAcknowledgment(answerValue),
+          isAcknowledgment: true,
+        },
+      ]);
+      proceedWithRuleBasedFollowUp(
+        mainQuestion,
+        updatedAnswers.find((a) => a.questionId === mainQuestion.id)?.value ?? "",
+        updatedAnswers
+      );
+      return;
+    }
+
+    const guide = resolveTermSheetGuide(loanType, selectedAgencies, fundingPrograms);
+    const turnType =
+      followUp.source === "llm" ? "clarification_answer" : "follow_up_answer";
+
+    const ok = await invokeNextTurn(
+      {
+        loanType,
+        agencies: selectedAgencies,
+        fundingPrograms,
+        currentIndex,
+        triggerQuestion: followUp,
+        mainQuestion,
+        answeredFollowUp: followUp,
+        answerValue,
+        skipped,
+        turnType,
+        questions,
+        answers: updatedAnswers,
+        completedFollowUpKeys: [...updatedCompletedKeys],
+        remainingQuestionIds,
+        termSheetGuideSummary: guide?.summary?.trim(),
+        recentMessages: messages.slice(-6).map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+      },
+      mainQuestion
+    );
+
+    if (ok) return;
+
+    appendAssistantMessages([
+      {
+        content: skipped
+          ? "No problem — moving on."
+          : buildFollowUpAcknowledgment(answerValue),
+        isAcknowledgment: true,
+      },
+    ]);
+    proceedWithRuleBasedFollowUp(
+      mainQuestion,
+      updatedAnswers.find((a) => a.questionId === mainQuestion.id)?.value ?? "",
+      updatedAnswers
+    );
   };
 
   const handleSend = async () => {
@@ -947,7 +1065,6 @@ export function GuidedReviewWizard({
 
       setAnswers(updatedAnswers);
       syncField(followUp.storeInField, merged);
-      setCompletedFollowUpKeys((prev) => new Set(prev).add(followUp.followUpKey));
       setFollowUpTranscript((prev) => [
         ...prev,
         {
@@ -960,20 +1077,18 @@ export function GuidedReviewWizard({
       ]);
       setActiveFollowUp(null);
 
-      appendAssistantMessages([
-        { content: buildFollowUpAcknowledgment(trimmed), isAcknowledgment: true },
-      ]);
+      const updatedCompletedKeys = new Set(completedFollowUpKeys).add(
+        followUp.followUpKey
+      );
+      setCompletedFollowUpKeys(updatedCompletedKeys);
 
-      if (mainQuestion) {
-        const mainAnswer = updatedAnswers.find((a) => a.questionId === mainQuestion.id);
-        proceedWithRuleBasedFollowUp(
-          mainQuestion,
-          mainAnswer?.value ?? "",
-          updatedAnswers
-        );
-      } else {
-        advanceToNextMainQuestion(updatedAnswers);
-      }
+      await proceedAfterFollowUpAnswer(
+        followUp,
+        trimmed,
+        updatedAnswers,
+        updatedCompletedKeys,
+        false
+      );
       return;
     }
 
@@ -1004,7 +1119,6 @@ export function GuidedReviewWizard({
 
     if (activeFollowUp) {
       const followUp = activeFollowUp;
-      setCompletedFollowUpKeys((prev) => new Set(prev).add(followUp.followUpKey));
       setFollowUpTranscript((prev) => [
         ...prev,
         {
@@ -1016,18 +1130,19 @@ export function GuidedReviewWizard({
         },
       ]);
       setActiveFollowUp(null);
-      appendAssistantMessages([{ content: "No problem — moving on.", isAcknowledgment: true }]);
 
-      if (mainQuestion) {
-        const mainAnswer = answers.find((a) => a.questionId === mainQuestion.id);
-        proceedWithRuleBasedFollowUp(
-          mainQuestion,
-          mainAnswer?.value ?? "",
-          answers
-        );
-      } else {
-        advanceToNextMainQuestion(answers);
-      }
+      const updatedCompletedKeys = new Set(completedFollowUpKeys).add(
+        followUp.followUpKey
+      );
+      setCompletedFollowUpKeys(updatedCompletedKeys);
+
+      void proceedAfterFollowUpAnswer(
+        followUp,
+        "",
+        answers,
+        updatedCompletedKeys,
+        true
+      );
       return;
     }
 

@@ -125,6 +125,11 @@ async function main() {
   if (turn3.data.clarification) {
     console.log(`   LLM clarify: ${turn3.data.clarification.question}`);
   }
+  if (turn3.data.remainingQuestionIds) {
+    console.log(`   Remaining queue: ${turn3.data.remainingQuestionIds.length} ids`);
+  }
+
+  console.log("\nRun node scripts/test-wizard-hardening.mjs for follow-up chain tests.\n");
 }
 
 main().catch((e) => {

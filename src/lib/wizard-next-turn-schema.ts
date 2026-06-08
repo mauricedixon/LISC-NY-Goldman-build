@@ -4,6 +4,8 @@ import type { WizardAnswer, WizardQuestion } from "@/types/wizard";
 
 export type NextTurnAction = "clarification" | "follow_up" | "main_question" | "finish";
 
+export type NextTurnType = "main_answer" | "follow_up_answer" | "clarification_answer";
+
 export interface NextTurnMessage {
   role: "user" | "assistant";
   content: string;
@@ -22,6 +24,17 @@ export interface NextTurnRequest {
   completedFollowUpKeys: string[];
   termSheetGuideSummary?: string;
   recentMessages?: NextTurnMessage[];
+  /** Phase 2c — ordered ids still to ask; server updates each turn. */
+  remainingQuestionIds?: string[];
+  /** Defaults to main_answer. */
+  turnType?: NextTurnType;
+  /** Required for follow_up_answer / clarification_answer. */
+  mainQuestion?: WizardQuestion;
+  /** Follow-up being answered (follow_up_answer). */
+  answeredFollowUp?: Pick<
+    FollowUpQuestion,
+    "id" | "followUpKey" | "storeInField" | "category" | "question" | "mergeMode"
+  >;
 }
 
 export interface NextTurnPrefaceMessage {
@@ -41,6 +54,8 @@ export interface NextTurnSuccess {
   categoryTransition?: string;
   nextIndex?: number;
   workingAnswers: WizardAnswer[];
+  remainingQuestionIds: string[];
+  skippedQuestionIds?: string[];
 }
 
 export interface NextTurnFailure {

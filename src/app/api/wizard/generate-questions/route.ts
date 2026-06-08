@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildFallbackQuestions } from "@/lib/wizard-fallback";
+import { applyQuestionGuardrails } from "@/lib/wizard-question-guardrails";
 import { formatFundingPrograms } from "@/types/deal";
 import { retrieveRulebookContext } from "@/utils/rag";
 import { parseClaudeJson } from "@/utils/parse-claude-json";
@@ -89,7 +90,7 @@ export async function POST(request: NextRequest) {
     if (chunks.length === 0) {
       return NextResponse.json({
         success: true,
-        questions: buildFallbackQuestions(loanType),
+        questions: applyQuestionGuardrails(buildFallbackQuestions(loanType), loanType),
         usedFallback: true,
       });
     }
@@ -135,6 +136,8 @@ Rules:
 - Ground helpText in the rulebook excerpts when possible.
 - Order questions logically: basics → unit mix → financials → compliance → additional.
 - Do not duplicate fields — one primary question per field.
+- loanType questions must ask about construction/preservation type — never 4%/9% LIHTC (that belongs in additionalNotes or follow-ups).
+- totalUnits questions must ask for unit count only — never LIHTC set-aside or AMI band breakdown.
 `;
 
     const msg = await anthropic.messages.create({
@@ -154,12 +157,15 @@ Rules:
       console.error("JSON parse error — raw response:", responseText.slice(0, 500));
       return NextResponse.json({
         success: true,
-        questions: buildFallbackQuestions(loanType),
+        questions: applyQuestionGuardrails(buildFallbackQuestions(loanType), loanType),
         usedFallback: true,
       });
     }
 
-    const questions = normalizeQuestions(parsed.questions, loanType);
+    const questions = applyQuestionGuardrails(
+      normalizeQuestions(parsed.questions, loanType),
+      loanType
+    );
 
     return NextResponse.json({ success: true, questions, usedFallback: false });
   } catch (error: unknown) {
