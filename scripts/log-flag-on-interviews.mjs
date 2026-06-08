@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Walk two full flag-on interview scenarios through conversation-turn,
- * logging Haiku acks, LLM clarifications, and expected rule follow-ups.
+ * Walk two full flag-on interview scenarios through next-turn,
+ * logging Haiku acks, LLM clarifications, and rule follow-ups.
  *
  * Usage: node scripts/log-flag-on-interviews.mjs
- * Requires dev server + WIZARD_LLM_CONVERSATION=true
+ * Requires dev server + WIZARD_NEXT_TURN=true (+ WIZARD_LLM_CONVERSATION=true for LLM acks)
  */
 
 const BASE = process.env.BASE_URL || "http://localhost:3000";
@@ -34,6 +34,10 @@ const SCENARIOS = [
       followup_leverage_implied:
         "HPD loan plus LIHTC equity; standard construction financing stack",
     },
+    clarificationAnswers: {
+      lihtc_percentage: "9% LIHTC",
+      lihtc_40_60_unit_split: "Split per 40/60 election — details TBD",
+    },
   },
   {
     id: "harlem",
@@ -56,64 +60,9 @@ const SCENARIOS = [
       followup_lihtc_setasides: "40/60 LIHTC",
       followup_rehab_scope: "Moderate rehab — systems + envelope, not gut",
     },
+    clarificationAnswers: {},
   },
 ];
-
-function parseNumber(value) {
-  const n = parseFloat(String(value).replace(/[^0-9.]/g, ""));
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseMoney(value) {
-  return parseNumber(value);
-}
-
-/** Mirror of rule follow-ups in wizard-conversation.ts (subset for logging). */
-function getRuleFollowUp(field, answerValue, answers, questions, completed, ctx) {
-  const programs = ctx.fundingPrograms ?? [];
-  const loanType = ctx.loanType ?? "";
-  const value = answerValue.trim();
-
-  const mk = (key, category, question) => ({
-    source: "rule",
-    key,
-    category,
-    question,
-  });
-
-  if (field === "borough" && programs.includes("HPD") && !completed.has("followup_hpd_setasides")) {
-    return mk("followup_hpd_setasides", "Compliance", "Any HPD set-asides or program requirements to flag?");
-  }
-  if (field === "borough" && programs.includes("HCR") && !completed.has("followup_hcr_rent_restrictions")) {
-    return mk("followup_hcr_rent_restrictions", "Compliance", "Any HCR rent restrictions or MBR requirements to note?");
-  }
-  if (field === "totalUnits" && programs.includes("LIHTC") && !completed.has("followup_lihtc_setasides")) {
-    return mk("followup_lihtc_setasides", "Unit Mix", "What's the LIHTC set-aside breakdown (e.g. 20/50, 40/60, or 80% AMI bands)?");
-  }
-  if (field === "totalUnits" && loanType === "New Construction" && !completed.has("followup_construction_phasing")) {
-    return mk("followup_construction_phasing", "Project Basics", "Any construction phasing, multiple buildings, or staged certificate of occupancy?");
-  }
-  if (field === "loanType" && loanType === "Preservation / Rehab" && !completed.has("followup_rehab_scope")) {
-    return mk("followup_rehab_scope", "Project Basics", "What's the scope of rehab — moderate, substantial, or gut renovation?");
-  }
-
-  if (field === "requestedLoanAmount" || field === "totalDevelopmentCost") {
-    const tdcField = questions.find((q) => q.field === "totalDevelopmentCost");
-    const loanField = questions.find((q) => q.field === "requestedLoanAmount");
-    const tdcAns = answers.find((a) => a.questionId === tdcField?.id);
-    const loanAns = answers.find((a) => a.questionId === loanField?.id);
-    const tdc = parseMoney(tdcAns?.value);
-    const loan = parseMoney(loanAns?.value);
-    if (tdc > 0 && loan > 0 && loan <= tdc) {
-      const implied = Math.round((loan / tdc) * 1000) / 10;
-      if (implied >= 80 && !completed.has("followup_leverage_implied")) {
-        return mk("followup_leverage_implied", "Financials", `Loan ÷ TDC implies ~${implied}% leverage — anything we should note?`);
-      }
-    }
-  }
-
-  return null;
-}
 
 async function fetchQuestions(scenario) {
   const res = await fetch(`${BASE}/api/wizard/generate-questions`, {
@@ -132,15 +81,135 @@ async function fetchQuestions(scenario) {
   return { questions: data.questions, usedFallback: data.usedFallback };
 }
 
-async function conversationTurn(payload) {
+async function nextTurn(payload) {
   const start = Date.now();
-  const res = await fetch(`${BASE}/api/wizard/conversation-turn`, {
+  const res = await fetch(`${BASE}/api/wizard/next-turn`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   const data = await res.json();
   return { status: res.status, data, ms: Date.now() - start };
+}
+
+function upsertAnswer(answers, questionId, value, skipped = false) {
+  return [
+    ...answers.filter((a) => a.questionId !== questionId),
+    { questionId, value, skipped },
+  ];
+}
+
+async function drainFollowUps(scenario, state, mainQuestion, firstTurn) {
+  let turn = firstTurn;
+  let mainQ = mainQuestion;
+
+  while (turn.data.success && turn.data.nextAction === "follow_up" && turn.data.followUp) {
+    const fu = turn.data.followUp;
+    const fuAnswer =
+      scenario.followUpAnswers[fu.followUpKey] ?? "(answered in interview)";
+
+    state.messages.push({ role: "assistant", content: fu.question });
+    state.messages.push({ role: "user", content: fuAnswer });
+    state.completedFollowUpKeys.add(fu.followUpKey);
+
+    turn = await nextTurn({
+      loanType: scenario.loanType,
+      agencies: scenario.agencies,
+      fundingPrograms: scenario.fundingPrograms,
+      currentIndex: state.currentIndex,
+      triggerQuestion: fu,
+      mainQuestion: mainQ,
+      answeredFollowUp: fu,
+      answerValue: fuAnswer,
+      skipped: false,
+      turnType: "follow_up_answer",
+      questions: state.questions,
+      answers: turn.data.workingAnswers,
+      completedFollowUpKeys: [...state.completedFollowUpKeys],
+      remainingQuestionIds: turn.data.remainingQuestionIds ?? state.remainingQuestionIds,
+      recentMessages: state.messages.slice(-8),
+    });
+
+    state.turns.push({
+      type: "follow_up_answer",
+      key: fu.followUpKey,
+      question: fu.question,
+      answer: fuAnswer,
+      ackMs: turn.ms,
+      acknowledgment: turn.data.success ? turn.data.acknowledgment : turn.data.error,
+      nextAction: turn.data.success ? turn.data.nextAction : "error",
+      chainedFollowUp: turn.data.success && turn.data.followUp ? turn.data.followUp : null,
+    });
+
+    if (!turn.data.success) break;
+    state.answers = turn.data.workingAnswers;
+    state.remainingQuestionIds = turn.data.remainingQuestionIds ?? [];
+  }
+
+  return turn;
+}
+
+async function answerClarification(scenario, state, mainQuestion, clarifyTurn) {
+  const clarification = clarifyTurn.data.clarification;
+  if (!clarification) return clarifyTurn;
+
+  const clarifyAnswer =
+    scenario.clarificationAnswers[clarification.clarificationKey] ??
+    "See additional notes";
+
+  const fu = {
+    id: clarification.clarificationKey,
+    followUpKey: clarification.clarificationKey,
+    category: mainQuestion.category,
+    field: clarification.storeInField,
+    storeInField: clarification.storeInField,
+    mergeMode: "append",
+    question: clarification.question,
+    helpText: clarification.helpText,
+    inputType: "textarea",
+    required: false,
+    source: "llm",
+  };
+
+  state.messages.push({ role: "assistant", content: clarification.question });
+  state.messages.push({ role: "user", content: clarifyAnswer });
+  state.completedFollowUpKeys.add(clarification.clarificationKey);
+
+  const turn = await nextTurn({
+    loanType: scenario.loanType,
+    agencies: scenario.agencies,
+    fundingPrograms: scenario.fundingPrograms,
+    currentIndex: state.currentIndex,
+    triggerQuestion: fu,
+    mainQuestion,
+    answeredFollowUp: fu,
+    answerValue: clarifyAnswer,
+    skipped: false,
+    turnType: "clarification_answer",
+    questions: state.questions,
+    answers: clarifyTurn.data.workingAnswers,
+    completedFollowUpKeys: [...state.completedFollowUpKeys],
+    remainingQuestionIds: clarifyTurn.data.remainingQuestionIds ?? state.remainingQuestionIds,
+    recentMessages: state.messages.slice(-8),
+  });
+
+  state.turns.push({
+    type: "clarification_answer",
+    key: clarification.clarificationKey,
+    question: clarification.question,
+    answer: clarifyAnswer,
+    ackMs: turn.ms,
+    acknowledgment: turn.data.success ? turn.data.acknowledgment : turn.data.error,
+    nextAction: turn.data.success ? turn.data.nextAction : "error",
+  });
+
+  if (turn.data.success) {
+    state.answers = turn.data.workingAnswers;
+    state.remainingQuestionIds = turn.data.remainingQuestionIds ?? [];
+    return drainFollowUps(scenario, state, mainQuestion, turn);
+  }
+
+  return turn;
 }
 
 async function runScenario(scenario) {
@@ -151,109 +220,166 @@ async function runScenario(scenario) {
   const { questions, usedFallback } = await fetchQuestions(scenario);
   console.log(`Questions: ${questions.length} (${usedFallback ? "fallback" : "enriched"})`);
 
-  const answers = [];
-  const completedFollowUpKeys = new Set();
-  const messages = [];
-  const turns = [];
-  const ctx = {
-    loanType: scenario.loanType,
-    fundingPrograms: scenario.fundingPrograms,
+  const state = {
+    questions,
+    answers: [],
+    completedFollowUpKeys: new Set(),
+    remainingQuestionIds: [],
+    currentIndex: 0,
+    messages: [],
+    turns: [],
   };
 
-  const mainQuestions = questions.filter((q) =>
-    Object.prototype.hasOwnProperty.call(scenario.answers, q.field)
-  );
+  const fieldsInOrder = [
+    "projectName",
+    "developerName",
+    "loanType",
+    "borough",
+    "totalUnits",
+    "totalDevelopmentCost",
+    "requestedLoanAmount",
+    "additionalNotes",
+  ];
 
-  for (const q of questions) {
-    const answerValue = scenario.answers[q.field];
+  for (const field of fieldsInOrder) {
+    const answerValue = scenario.answers[field];
     if (answerValue === undefined) continue;
 
-    messages.push({ role: "assistant", content: q.question });
-    messages.push({ role: "user", content: answerValue });
+    const q = questions.find((x) => x.field === field);
+    if (!q) continue;
 
-    const updatedAnswers = [
-      ...answers.filter((a) => a.questionId !== q.id),
-      { questionId: q.id, value: answerValue, skipped: false },
-    ];
+    const currentIndex = questions.findIndex((x) => x.id === q.id);
+    state.currentIndex = currentIndex >= 0 ? currentIndex : state.currentIndex;
+    state.answers = upsertAnswer(state.answers, q.id, answerValue);
 
-    const turn = await conversationTurn({
+    state.messages.push({ role: "assistant", content: q.question });
+    state.messages.push({ role: "user", content: answerValue });
+
+    let turn = await nextTurn({
       loanType: scenario.loanType,
       agencies: scenario.agencies,
       fundingPrograms: scenario.fundingPrograms,
+      currentIndex: state.currentIndex,
       triggerQuestion: q,
       answerValue,
       skipped: false,
-      questions,
-      answers: updatedAnswers,
-      recentMessages: messages.slice(-8),
+      turnType: "main_answer",
+      questions: state.questions,
+      answers: state.answers,
+      completedFollowUpKeys: [...state.completedFollowUpKeys],
+      remainingQuestionIds: state.remainingQuestionIds,
+      recentMessages: state.messages.slice(-8),
     });
 
     if (turn.status === 403) {
-      console.error("❌ Flag off — enable WIZARD_LLM_CONVERSATION=true");
+      console.error("❌ Flag off — enable WIZARD_NEXT_TURN=true");
       process.exit(1);
     }
 
-    const ruleFollowUp = getRuleFollowUp(
-      q.field,
-      answerValue,
-      updatedAnswers,
-      questions,
-      completedFollowUpKeys,
-      ctx
-    );
-
     const record = {
-      field: q.field,
+      field,
       question: q.question,
       answer: answerValue,
       ackMs: turn.ms,
       acknowledgment: turn.data.success ? turn.data.acknowledgment : turn.data.error,
-      llmClarification: turn.data.success && turn.data.needsClarification
-        ? turn.data.clarification
-        : null,
-      ruleFollowUp,
+      llmClarification:
+        turn.data.success && turn.data.nextAction === "clarification"
+          ? turn.data.clarification
+          : null,
+      ruleFollowUp:
+        turn.data.success && turn.data.nextAction === "follow_up" && turn.data.followUp?.source === "rule"
+          ? {
+              source: "rule",
+              key: turn.data.followUp.followUpKey,
+              category: turn.data.followUp.category,
+              question: turn.data.followUp.question,
+            }
+          : null,
+      nextAction: turn.data.success ? turn.data.nextAction : "error",
+      remainingAfter: turn.data.success ? turn.data.remainingQuestionIds?.length : null,
     };
-    turns.push(record);
+    state.turns.push(record);
 
-    console.log(`\n[${q.field}] ${q.question}`);
+    console.log(`\n[${field}] ${q.question}`);
     console.log(`  Answer: ${answerValue}`);
-    console.log(`  Haiku ack (${turn.ms}ms): ${record.acknowledgment?.slice(0, 120)}${(record.acknowledgment?.length ?? 0) > 120 ? "…" : ""}`);
+    console.log(
+      `  Haiku ack (${turn.ms}ms): ${record.acknowledgment?.slice(0, 120)}${(record.acknowledgment?.length ?? 0) > 120 ? "…" : ""}`
+    );
+    console.log(`  next-turn action: ${record.nextAction}`);
     if (record.llmClarification) {
       console.log(`  ⚠️  LLM clarification: ${record.llmClarification.question}`);
     } else {
       console.log(`  LLM clarification: none`);
     }
-    if (ruleFollowUp) {
-      console.log(`  Rule follow-up: ${ruleFollowUp.question}`);
-      completedFollowUpKeys.add(ruleFollowUp.key);
-      const fuAnswer = scenario.followUpAnswers[ruleFollowUp.key] ?? "(answered in interview)";
-      messages.push({ role: "assistant", content: ruleFollowUp.question });
-      messages.push({ role: "user", content: fuAnswer });
+    if (record.ruleFollowUp) {
+      console.log(`  Rule follow-up: ${record.ruleFollowUp.question}`);
     }
 
-    answers.length = 0;
-    answers.push(...updatedAnswers);
+    if (!turn.data.success) continue;
+
+    state.answers = turn.data.workingAnswers;
+    state.remainingQuestionIds = turn.data.remainingQuestionIds ?? [];
+
+    if (turn.data.nextAction === "follow_up") {
+      turn = await drainFollowUps(scenario, state, q, turn);
+    } else if (turn.data.nextAction === "clarification") {
+      turn = await answerClarification(scenario, state, q, turn);
+      if (turn.data.success && turn.data.nextAction === "follow_up") {
+        turn = await drainFollowUps(scenario, state, q, turn);
+      }
+    }
+
+    if (turn.data?.success && turn.data.nextAction === "finish") {
+      console.log("\n  Interview queue finished early.");
+      break;
+    }
   }
 
-  return { scenario, questions, turns, completedFollowUpKeys: [...completedFollowUpKeys] };
+  return {
+    scenario,
+    questions,
+    turns: state.turns,
+    completedFollowUpKeys: [...state.completedFollowUpKeys],
+  };
 }
 
 async function main() {
-  console.log("Flag-on interview pattern log");
+  console.log("Flag-on interview pattern log (next-turn)");
   console.log(`Server: ${BASE}`);
 
-  const probe = await conversationTurn({
+  const probe = await nextTurn({
     loanType: "New Construction",
     agencies: ["hpd"],
     fundingPrograms: ["LIHTC"],
-    triggerQuestion: { id: "x", field: "projectName", category: "Basics", question: "Name?" },
+    currentIndex: 0,
+    triggerQuestion: {
+      id: "x",
+      field: "projectName",
+      category: "Basics",
+      question: "Name?",
+      inputType: "text",
+      required: true,
+    },
     answerValue: "test",
     skipped: false,
-    questions: [{ id: "x", field: "projectName", category: "Basics", question: "Name?" }],
+    turnType: "main_answer",
+    questions: [
+      {
+        id: "x",
+        field: "projectName",
+        category: "Basics",
+        question: "Name?",
+        inputType: "text",
+        required: true,
+      },
+    ],
     answers: [{ questionId: "x", value: "test", skipped: false }],
+    completedFollowUpKeys: [],
+    remainingQuestionIds: [],
   });
+
   if (probe.status === 403) {
-    console.error("\n❌ conversation-turn returned 403. Set both env flags true and restart dev server.");
+    console.error("\n❌ next-turn returned 403. Set WIZARD_NEXT_TURN=true and restart dev server.");
     process.exit(1);
   }
 
@@ -267,20 +393,24 @@ async function main() {
   console.log("=".repeat(72));
 
   const llmClarifications = results.flatMap((r) =>
-    r.turns.filter((t) => t.llmClarification).map((t) => ({
-      scenario: r.scenario.id,
-      field: t.field,
-      q: t.llmClarification.question,
-    }))
+    r.turns
+      .filter((t) => t.llmClarification)
+      .map((t) => ({
+        scenario: r.scenario.id,
+        field: t.field,
+        q: t.llmClarification.question,
+      }))
   );
 
   const ruleFollowUps = results.flatMap((r) =>
-    r.turns.filter((t) => t.ruleFollowUp).map((t) => ({
-      scenario: r.scenario.id,
-      field: t.field,
-      key: t.ruleFollowUp.key,
-      q: t.ruleFollowUp.question,
-    }))
+    r.turns
+      .filter((t) => t.ruleFollowUp)
+      .map((t) => ({
+        scenario: r.scenario.id,
+        field: t.field,
+        key: t.ruleFollowUp.key,
+        q: t.ruleFollowUp.question,
+      }))
   );
 
   console.log(`\nLLM clarifications fired: ${llmClarifications.length}`);
@@ -288,7 +418,7 @@ async function main() {
     console.log(`  [${c.scenario}/${c.field}] ${c.q}`);
   }
   if (llmClarifications.length === 0) {
-    console.log("  (none — clear answers did not trigger Haiku clarifications)");
+    console.log("  (none — clear answers or dedup suppressed overlapping clarifications)");
   }
 
   console.log(`\nRule follow-ups fired: ${ruleFollowUps.length}`);
@@ -302,10 +432,10 @@ async function main() {
     console.log(`  ${key} (${scenarios.join(", ")}): ${sample.q}`);
   }
 
+  const mainTurns = results.flatMap((r) => r.turns.filter((t) => t.field && t.ackMs));
   const avgMs =
-    results.flatMap((r) => r.turns.map((t) => t.ackMs)).reduce((a, b) => a + b, 0) /
-    results.flatMap((r) => r.turns).length;
-  console.log(`\nAvg ack latency: ${Math.round(avgMs)}ms`);
+    mainTurns.reduce((a, t) => a + t.ackMs, 0) / Math.max(mainTurns.length, 1);
+  console.log(`\nAvg main-turn ack latency: ${Math.round(avgMs)}ms`);
 
   const outPath = new URL("../output/interview-pattern-log.json", import.meta.url);
   const fs = await import("fs");
@@ -314,7 +444,7 @@ async function main() {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
     path.join(dir, "interview-pattern-log.json"),
-    JSON.stringify({ generatedAt: new Date().toISOString(), results }, null, 2)
+    JSON.stringify({ generatedAt: new Date().toISOString(), api: "next-turn", results }, null, 2)
   );
   console.log(`\nFull log written to output/interview-pattern-log.json`);
 }

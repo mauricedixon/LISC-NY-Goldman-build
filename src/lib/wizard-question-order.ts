@@ -1,3 +1,4 @@
+import { isFieldSatisfiedByPriorAnswers } from "@/lib/wizard-answer-informed-skip";
 import {
   getAnswerByField,
   isRedundantLoanTypeQuestion,
@@ -102,6 +103,11 @@ export function buildRemainingQuestionIds(options: BuildRemainingOptions): strin
     if (!q) continue;
     if (isRedundantLoanTypeQuestion(q, loanType)) continue;
     if (isMainFieldAnswered(field, questions, answers)) continue;
+    if (
+      isFieldSatisfiedByPriorAnswers(q, answers, questions, fundingPrograms).skip
+    ) {
+      continue;
+    }
     ids.push(q.id);
   }
   return ids;
@@ -148,6 +154,24 @@ export function advanceQuestionQueue(
     if (isMainFieldAnswered(head.field, questions, workingAnswers)) {
       queue.shift();
       skippedQuestionIds.push(headId);
+      continue;
+    }
+
+    const informed = isFieldSatisfiedByPriorAnswers(
+      head,
+      workingAnswers,
+      questions,
+      ctx.fundingPrograms ?? []
+    );
+    if (informed.skip) {
+      queue.shift();
+      skippedQuestionIds.push(headId);
+      if (informed.inferredValue) {
+        workingAnswers = [
+          ...workingAnswers.filter((a) => a.questionId !== head.id),
+          { questionId: head.id, value: informed.inferredValue, skipped: false },
+        ];
+      }
       continue;
     }
 

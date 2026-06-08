@@ -43,6 +43,7 @@ import {
   resolveTermSheetGuide,
 } from "@/lib/term-sheet-guide-bridge";
 import { isWizardLlmConversationEnabled } from "@/lib/wizard-conversation-config";
+import { isWizardLlmOpeningEnabled } from "@/lib/wizard-llm-opening-config";
 import { isWizardDynamicInterviewEnabled } from "@/lib/wizard-dynamic-interview-config";
 import { isWizardNextTurnEnabled } from "@/lib/wizard-next-turn-config";
 import { buildRemainingQuestionIds } from "@/lib/wizard-question-order";
@@ -447,6 +448,34 @@ export function GuidedReviewWizard({
     setActiveFollowUp(pendingFollowUp);
     setInputValue("");
     setMessages(openingMessages);
+
+    if (isWizardLlmOpeningEnabled()) {
+      void (async () => {
+        try {
+          const res = await fetch("/api/wizard/opening-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              loanType,
+              agencies: selectedAgencies,
+              fundingPrograms,
+            }),
+          });
+          const data = (await res.json()) as { success?: boolean; opening?: string };
+          if (res.ok && data.success && data.opening?.trim()) {
+            setMessages((prev) => {
+              if (!prev.length) return prev;
+              return [
+                { role: "assistant", content: plainAcknowledgment(data.opening!) },
+                ...prev.slice(1),
+              ];
+            });
+          }
+        } catch {
+          // Scripted opening remains
+        }
+      })();
+    }
     setHasStarted(true);
 
     if (!pendingFollowUp && !firstQuestion) {

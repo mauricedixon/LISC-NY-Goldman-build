@@ -54,11 +54,31 @@ export function shouldSuppressLlmClarification(
   clarification: ConversationClarification | undefined
 ): boolean {
   if (!clarification) return true;
-  if (!ruleFollowUp) return false;
   if (isHighValueClarification(triggerQuestion, answerValue)) return false;
 
   const clarifyText = `${clarification.question} ${clarification.helpText ?? ""}`;
+
+  if (
+    clarification.clarificationKey === "lihtc_percentage" &&
+    (ruleFollowUp || triggerQuestion.field === "borough")
+  ) {
+    return true;
+  }
+
+  if (
+    clarification.clarificationKey === "lihtc_40_60_unit_split" &&
+    /\b40\/60\b/i.test(answerValue)
+  ) {
+    return true;
+  }
+
+  if (!ruleFollowUp) return false;
+
   if (RULE_TOPIC_PATTERNS.some((pattern) => pattern.test(clarifyText))) {
+    return true;
+  }
+
+  if (/4%.*9%|9%.*4%/i.test(clarifyText) && triggerQuestion.field === "borough") {
     return true;
   }
 

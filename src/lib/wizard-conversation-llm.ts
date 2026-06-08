@@ -170,3 +170,49 @@ ${CONVERSATION_TURN_JSON_SCHEMA}
 
   return { acknowledgment, clarification, claudeMs };
 }
+
+export interface WizardOpeningInput {
+  loanType: string;
+  agencies: string[];
+  fundingPrograms: string[];
+  termSheetGuideSummary?: string;
+}
+
+export async function generateWizardOpening(
+  input: WizardOpeningInput
+): Promise<{ opening: string; claudeMs: number }> {
+  const programs = formatFundingPrograms(input.fundingPrograms ?? []);
+  const prompt = `
+You are an expert affordable housing underwriter assistant for LISC NY.
+Write a single short opening line for a guided deal interview (1 sentence, plain text, no markdown).
+
+Deal context:
+- Loan type: ${input.loanType}
+- Funding programs: ${programs}
+- Agencies: ${(input.agencies ?? []).join(", ") || "(none)"}
+${input.termSheetGuideSummary ? `- Term sheet guide note: ${input.termSheetGuideSummary.slice(0, 300)}` : ""}
+
+The opening should set expectations: a few short conversational questions for deal context — not a full term sheet review.
+Reference the funding programs and loan type when known. Do not ask a question yet.
+
+Respond strictly as JSON: { "opening": "your sentence here" }
+`;
+
+  const model = getWizardConversationModel();
+  const claudeStartedAt = Date.now();
+  const msg = await anthropic.messages.create({
+    model,
+    max_tokens: 120,
+    temperature: 0,
+    system: "Output valid JSON only.",
+    messages: [{ role: "user", content: prompt }],
+  });
+  const claudeMs = Date.now() - claudeStartedAt;
+  const responseText = msg.content[0].type === "text" ? msg.content[0].text : "{}";
+  const parsed = parseClaudeJson<{ opening?: string }>(responseText);
+  const opening =
+    parsed.opening?.trim() ||
+    `Quick context on your ${programs} ${input.loanType} deal — a few short questions, not a term sheet review.`;
+
+  return { opening, claudeMs };
+}

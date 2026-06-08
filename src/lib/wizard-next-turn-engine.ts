@@ -1,3 +1,4 @@
+import { getFollowUpKeysSatisfiedByAnswers } from "@/lib/wizard-answer-informed-skip";
 import {
   buildAcknowledgment,
   buildCategoryTransition,
@@ -66,18 +67,32 @@ function ensureRemainingIds(
   });
 }
 
+function mergeInformedFollowUpKeys(input: ResolveNextTurnBase): Set<string> {
+  const keys = new Set(input.completedFollowUpKeys);
+  for (const key of getFollowUpKeysSatisfiedByAnswers(
+    input.updatedAnswers,
+    input.questions,
+    input.fundingPrograms,
+    input.loanType
+  )) {
+    keys.add(key);
+  }
+  return keys;
+}
+
 function computeRuleFollowUpOnField(
   question: WizardQuestion,
   answerValue: string,
   input: ResolveNextTurnBase
 ): FollowUpQuestion | null {
   const ctx = conversationContext(input.loanType, input.fundingPrograms);
+  const completedKeys = mergeInformedFollowUpKeys(input);
   return getFollowUpQuestion(
     question,
     answerValue,
     input.updatedAnswers,
     input.questions,
-    input.completedFollowUpKeys,
+    completedKeys,
     ctx
   );
 }
