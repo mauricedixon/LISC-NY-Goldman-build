@@ -8,8 +8,11 @@ import {
   filterSectionsByTier,
 } from "@/lib/term-sheet-guide-utils";
 import {
-  fetchTermSheetGuide,
+  fetchTermSheetGuideEssential,
+  fetchTermSheetGuideExtended,
   getCachedTermSheetGuide,
+  hasCachedExtendedGuide,
+  isTermSheetGuideExtendedLoading,
   isTermSheetGuidePrefetching,
   prefetchTermSheetGuide,
 } from "@/lib/term-sheet-guide-cache";
@@ -234,6 +237,8 @@ export function TermSheetGuideSection({
   const [errorMessage, setErrorMessage] = useState("");
   const [isPrefetching, setIsPrefetching] = useState(false);
   const [showFullChecklist, setShowFullChecklist] = useState(false);
+  const [isLoadingExtended, setIsLoadingExtended] = useState(false);
+  const [extendedError, setExtendedError] = useState("");
 
   const currentFingerprint = buildTermSheetGuideFingerprint(
     loanType,
@@ -271,7 +276,7 @@ export function TermSheetGuideSection({
   }, [loanType, selectedAgencies, fundingPrograms, canGenerate]);
 
   const loadGuide = async () => {
-    const result = await fetchTermSheetGuide(
+    const result = await fetchTermSheetGuideEssential(
       loanType,
       selectedAgencies,
       fundingPrograms
@@ -279,11 +284,49 @@ export function TermSheetGuideSection({
     setGuide(result);
     setGuideBaseline(currentFingerprint);
     setShowFullChecklist(false);
+    setExtendedError("");
     setTimeout(() => {
       document
         .getElementById("term-sheet-guide-results")
         ?.scrollIntoView({ behavior: "smooth" });
     }, 100);
+  };
+
+  const loadExtendedChecklist = async () => {
+    setIsLoadingExtended(true);
+    setExtendedError("");
+    try {
+      const result = await fetchTermSheetGuideExtended(
+        loanType,
+        selectedAgencies,
+        fundingPrograms
+      );
+      setGuide(result);
+      setShowFullChecklist(true);
+    } catch {
+      setExtendedError("Failed to load full checklist. Please try again.");
+    } finally {
+      setIsLoadingExtended(false);
+    }
+  };
+
+  const handleToggleChecklist = async () => {
+    if (showFullChecklist) {
+      setShowFullChecklist(false);
+      return;
+    }
+
+    const extendedReady = hasCachedExtendedGuide(
+      loanType,
+      selectedAgencies,
+      fundingPrograms
+    );
+    if (extendedReady) {
+      setShowFullChecklist(true);
+      return;
+    }
+
+    await loadExtendedChecklist();
   };
 
   const handleGenerate = async () => {
@@ -310,7 +353,11 @@ export function TermSheetGuideSection({
   const visibleSections = guide
     ? filterSectionsByTier(guide.sections, showFullChecklist ? "all" : "essential")
     : [];
-  const hasExtendedItems = (tierCounts?.extended ?? 0) > 0;
+  const extendedLoaded = guide
+    ? hasCachedExtendedGuide(loanType, selectedAgencies, fundingPrograms)
+    : false;
+  const hasExtendedItems = extendedLoaded && (tierCounts?.extended ?? 0) > 0;
+  const showExtendedToggle = !!guide;
 
   return (
     <div className="space-y-4">
@@ -412,10 +459,16 @@ export function TermSheetGuideSection({
                   {showFullChecklist
                     ? `${tierCounts.total} checklist items across ${visibleSections.length} sections`
                     : `${tierCounts.essential} essential items across ${visibleSections.length} sections`}
-                  {!showFullChecklist && hasExtendedItems && (
+                  {!showFullChecklist && extendedLoaded && hasExtendedItems && (
                     <span className="normal-case font-normal text-slate-400">
                       {" "}
                       · +{tierCounts.extended} in full checklist
+                    </span>
+                  )}
+                  {!showFullChecklist && !extendedLoaded && (
+                    <span className="normal-case font-normal text-slate-400">
+                      {" "}
+                      · full checklist loads on demand
                     </span>
                   )}
                 </p>
@@ -443,17 +496,33 @@ export function TermSheetGuideSection({
               ))}
             </div>
 
-            {hasExtendedItems && (
-              <div className="pt-2 border-t border-slate-100">
+            {showExtendedToggle && (
+              <div className="pt-2 border-t border-slate-100 space-y-2">
                 <button
                   type="button"
-                  onClick={() => setShowFullChecklist((v) => !v)}
-                  className="text-sm text-brand hover:text-brand-hover font-medium"
+                  onClick={handleToggleChecklist}
+                  disabled={isLoadingExtended || isTermSheetGuideExtendedLoading(
+                    loanType,
+                    selectedAgencies,
+                    fundingPrograms
+                  )}
+                  className="flex items-center gap-2 text-sm text-brand hover:text-brand-hover font-medium disabled:opacity-50"
                 >
+                  {(isLoadingExtended ||
+                    isTermSheetGuideExtendedLoading(
+                      loanType,
+                      selectedAgencies,
+                      fundingPrograms
+                    )) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   {showFullChecklist
                     ? "Back to summary view"
-                    : `Show full checklist (+${tierCounts?.extended ?? 0} items)`}
+                    : extendedLoaded && hasExtendedItems
+                      ? `Show full checklist (+${tierCounts?.extended ?? 0} items)`
+                      : "Show full checklist"}
                 </button>
+                {extendedError && (
+                  <p className="text-sm text-red-500">{extendedError}</p>
+                )}
               </div>
             )}
           </div>
